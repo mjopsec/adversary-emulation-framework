@@ -525,15 +525,17 @@ class TaskDispatcher:
             f"  The command MUST directly perform the tactic's action — not a reconnaissance substitute. "
             f"  For privilege-escalation: actually escalate. For credential-access: actually steal credentials. "
             f"  For lateral-movement: actually move to another host.\n\n"
-            "TECHNICAL CONSTRAINTS — command must execute with NO extra dependencies:\n"
-            "- python_exec: ONLY Python standard library (socket, subprocess, os, sys, ctypes, winreg, struct, "
-            "ipaddress, platform, pathlib, shutil, glob, re, json, base64, hashlib, threading, etc.). "
-            "NEVER use third-party packages (netifaces, impacket, psutil, requests, paramiko, scapy, etc.). "
-            "For network info: subprocess.check_output(['ipconfig','/all']).decode() on Windows. "
-            "For process list: subprocess.check_output(['tasklist']).decode().\n"
-            "- powershell: use built-in PowerShell cmdlets only.\n"
-            "- shell_command: use native OS binaries (ipconfig, netstat, tasklist, net, reg, wmic on Windows; "
-            "ip, ss, ps, id, uname on Linux). No pip, no apt, no external downloads.\n"
+            "TOOLING GUIDELINES — use the right tool for the job:\n"
+            "- On Kali/Parrot/BlackArch/pentesting Linux: freely use nmap, masscan, gobuster, nikto, "
+            "sqlmap, hydra, john, hashcat, enum4linux, rpcclient, smbclient, impacket suite "
+            "(secretsdump.py, psexec.py, wmiexec.py, GetUserSPNs.py), netexec/crackmapexec, "
+            "responder, msfconsole/msfvenom, metasploit modules, nuclei, ffuf, etc.\n"
+            "- On Windows target: use native binaries AND pentest tools if installed. "
+            "For credential dumping: mimikatz, Rubeus, SharpDump. "
+            "For escalation: JuicyPotato, PrintSpoofer, GodPotato, Rubeus.\n"
+            "- python_exec: may use impacket, scapy, requests, paramiko if available on pentest OS. "
+            "Prefer subprocess calls to installed pentest tools over pure-Python reimplementation.\n"
+            "- Download-and-execute patterns are acceptable: curl/wget a payload then run it.\n"
             "Be specific — output REAL runnable commands. No interactive input, no GUI. Respond with JSON only."
         )
 
@@ -579,8 +581,6 @@ class TaskDispatcher:
             if plan.get("task_type") == "powershell" and not has_ps:
                 plan["task_type"] = "shell_command"
 
-            # Downgrade python_exec commands that use third-party modules
-            plan = _sanitize_python_command(plan, os_type)
             # Wrap python_exec as 'python -c "..."' shell command so it's copy-paste ready
             plan = _wrap_python_exec_as_shell(plan, os_type)
 
@@ -706,6 +706,8 @@ class TaskDispatcher:
         agent: "Agent | None",
         settings: Any,
         evasion_context: str | None = None,
+        campaign_context: str | None = None,
+        target: str | None = None,
     ) -> dict:
         """
         Versi plan yang mengembalikan primary command + 2-3 alternatif.
@@ -731,10 +733,14 @@ class TaskDispatcher:
                 available_types.append("powershell")
             if has_py:
                 available_types.append("python_exec")
+            target_ip = target or agent.ip_address or "TARGET_IP"
             context_desc = (
+                f"Target IP/host: {target_ip}\n"
                 f"Target agent: OS={os_type}, Privilege={privilege}, "
                 f"Capabilities={', '.join(caps) or 'shell'}\n"
                 f"Available task types: {', '.join(available_types)}\n"
+                f"IMPORTANT: Use {target_ip} as the target in all commands — never use 127.0.0.1 or localhost "
+                f"unless the technique specifically targets the local machine.\n"
                 f"Commands will be executed directly on the agent — choose task_type accordingly."
             )
         else:
@@ -742,15 +748,23 @@ class TaskDispatcher:
             os_type = "windows"
             has_ps = True
             available_types = ["shell_command", "powershell", "python_exec"]
+            target_ip = target or "TARGET_IP"
             context_desc = (
+                f"Target IP/host: {target_ip}\n"
                 "No live agent at target — this is simulation mode.\n"
                 "Suggest realistic payloads that an attacker would actually use for this technique.\n"
+                f"IMPORTANT: Use {target_ip} as the target in all commands — never use 127.0.0.1 or localhost.\n"
                 "Available task types: shell_command, powershell, python_exec\n"
                 "Use task_type='simulation' for the primary if you want to indicate this is illustrative."
             )
 
         tactic = tech_info.get("tactic", "")
         tactic_obj = self._tactic_objective(tactic)
+
+        # ── Load ART tests dari library lokal ────────────────────────────────
+        from core.intel.art_loader import load_atomic_tests, format_art_for_shannon
+        art_tests = load_atomic_tests(technique_id, platform_filter=os_type if agent else None)
+        art_context = format_art_for_shannon(art_tests) if art_tests else ""
 
         system_prompt = (
             "You are a red team execution planner for an authorized adversary emulation platform. "
@@ -761,18 +775,20 @@ class TaskDispatcher:
             f"  to escalate privileges — not enumerate. If lateral-movement, actually move to another host. "
             f"  If credential-access, actually dump credentials. Never substitute a discovery command for an "
             f"  action-on-objective command.\n\n"
-            "TECHNICAL CONSTRAINTS — commands must work out-of-the-box:\n"
-            "1. python_exec commands: use ONLY Python standard library modules "
-            "(socket, subprocess, os, sys, ctypes, winreg, struct, ipaddress, platform, shutil, pathlib, etc.). "
-            "NEVER use pip-installable packages like netifaces, impacket, psutil, requests, paramiko, scapy, etc. "
-            "If you need network info on Windows use: subprocess.check_output(['ipconfig','/all']).decode(). "
-            "If you need process info use: subprocess.check_output(['tasklist']).decode(). "
-            "For registry: use winreg module. For sockets: use socket module.\n"
-            "2. powershell commands: use built-in cmdlets only (Get-NetIPConfiguration, Get-Process, etc.). "
-            "For staged payloads that need external tools, use IEX+DownloadString to load from http://192.168.1.100/tool.ps1.\n"
-            "3. shell_command: use native OS binaries only (ipconfig, net, netstat, tasklist, reg, wmic on Windows; "
-            "ip, ss, ps, id, uname, cat on Linux). No tool installation.\n"
-            "4. No interactive/GUI commands. No placeholders. Respond with valid JSON only."
+            "TOOLING GUIDELINES — use the right tool for the job:\n"
+            "1. On Kali/Parrot/BlackArch/pentesting Linux: freely use nmap, masscan, gobuster, nikto, "
+            "sqlmap, hydra, john, hashcat, enum4linux, rpcclient, smbclient, impacket suite "
+            "(secretsdump.py, psexec.py, wmiexec.py, GetUserSPNs.py), netexec/crackmapexec, "
+            "responder, msfconsole/msfvenom, metasploit modules, nuclei, ffuf, etc.\n"
+            "2. On Windows target: use native binaries AND pentest tools if installed. "
+            "For credential dumping: mimikatz, Rubeus, SharpDump. "
+            "For escalation: JuicyPotato, PrintSpoofer, GodPotato, Rubeus.\n"
+            "3. python_exec: may use impacket, scapy, requests, paramiko if available on pentest OS. "
+            "Prefer subprocess calls to installed pentest tools over pure-Python reimplementation.\n"
+            "4. powershell: may use IEX+DownloadString or Invoke-WebRequest to load remote tools. "
+            "Use built-in cmdlets when sufficient, external tools when they're more effective.\n"
+            "5. Download-and-execute is acceptable: curl/wget a payload then run it.\n"
+            "6. No interactive/GUI commands. No placeholders. Respond with valid JSON only."
         )
 
         evasion_note = (
@@ -783,12 +799,21 @@ class TaskDispatcher:
             "or timing/staging approaches that would evade the detected control."
         ) if evasion_context else ""
 
+        chain_note = (
+            f"\n\nCAMPAIGN CHAIN CONTEXT (previous phases):\n{campaign_context}\n"
+            "Use these prior-phase findings to inform this phase precisely — "
+            "target discovered open ports/services, use harvested credentials, "
+            "exploit identified vulnerabilities, and pivot from known compromised hosts."
+        ) if campaign_context else ""
+
+        art_note = f"\n\n{art_context}" if art_context else ""
+
         user_prompt = (
             f"ATT&CK Technique: {technique_id} — {tech_info.get('name', technique_id)}\n"
             f"Tactic: {tactic}\n"
             f"Description: {tech_info.get('description', '')[:500]}\n\n"
             f"YOUR GOAL: {tactic_obj}\n\n"
-            f"{context_desc}{evasion_note}\n\n"
+            f"{context_desc}{evasion_note}{chain_note}{art_note}\n\n"
             f"Return JSON with this exact structure (provide exactly 5 alternatives):\n"
             '{{"primary": {{"task_type": "shell_command|powershell|python_exec|simulation", '
             '"command": "for shell_command/powershell: the full runnable command; '
@@ -827,8 +852,7 @@ class TaskDispatcher:
             if primary.get("task_type") == "powershell" and not has_ps and agent is not None:
                 primary["task_type"] = "shell_command"
 
-            # Sanitize: downgrade third-party imports, then wrap as python -c "..."
-            primary = _sanitize_python_command(primary, os_type)
+            # Wrap python_exec as 'python -c "..."' shell command so it's copy-paste ready
             primary = _wrap_python_exec_as_shell(primary, os_type)
 
             # Validasi alternatives (max 5)
@@ -840,11 +864,29 @@ class TaskDispatcher:
                     alt["task_type"] = "shell_command"
                 if alt.get("task_type") == "powershell" and not has_ps and agent is not None:
                     alt["task_type"] = "shell_command"
-                alt = _sanitize_python_command(alt, os_type)
                 alt = _wrap_python_exec_as_shell(alt, os_type)
                 alternatives.append(alt)
 
-            return {"primary": primary, "alternatives": alternatives[:5]}
+            # Append ART tests sebagai alternatives berlabel [ART] — max 6 tambahan
+            art_alts = [
+                {
+                    "label": f"[ART] {t['name'][:40]}",
+                    "task_type": t["task_type"],
+                    "command": t["command"],
+                    "explanation": t["description"] or f"Atomic Red Team test — {t['name']}",
+                    "source": "art",
+                    "guid": t["guid"],
+                    "cleanup_command": t["cleanup_command"],
+                    "elevation_required": t["elevation_required"],
+                }
+                for t in art_tests
+            ]
+            return {
+                "primary": primary,
+                "alternatives": alternatives[:5],
+                "art_alternatives": art_alts[:6],
+                "has_art": len(art_alts) > 0,
+            }
 
         except Exception as e:
             msg = str(e)
@@ -854,7 +896,236 @@ class TaskDispatcher:
                 raise
             logger.error("Shannon plan_with_alternatives gagal untuk {}: {}", technique_id, e)
             fallback = self._fallback_plan(technique_id, agent)
-            return {"primary": fallback, "alternatives": []}
+            # Tetap sertakan ART alternatives walau Shannon gagal
+            art_alts = [
+                {
+                    "label": f"[ART] {t['name'][:40]}",
+                    "task_type": t["task_type"],
+                    "command": t["command"],
+                    "explanation": t["description"] or f"Atomic Red Team test — {t['name']}",
+                    "source": "art",
+                    "guid": t["guid"],
+                    "cleanup_command": t["cleanup_command"],
+                    "elevation_required": t["elevation_required"],
+                }
+                for t in art_tests
+            ]
+            return {
+                "primary": fallback,
+                "alternatives": [],
+                "art_alternatives": art_alts[:6],
+                "has_art": len(art_alts) > 0,
+            }
+
+    async def suggest_next_step(
+        self,
+        previous_results: list[dict],
+        existing_techniques: list[str],
+        agent: "Agent | None",
+        settings: Any,
+        environment: str = "it",
+        target: str | None = None,
+    ) -> dict:
+        """
+        Analisis hasil eksekusi sebelumnya dan rekomendasikan teknik ATT&CK
+        berikutnya yang paling logis + command konkret untuk dieksekusi.
+
+        Args:
+            previous_results: list of {technique_id, tactic, status, result_detail}
+            existing_techniques: daftar technique_id yang sudah ada di campaign
+            agent: agent yang terhubung ke target (jika ada)
+            settings: app settings
+            environment: "it" | "ot" | "hybrid_it_ot"
+            target: IP/hostname target
+
+        Returns:
+            {technique_id, technique_name, tactic, rationale, command,
+             task_type, explanation, order_hint, confidence}
+        """
+        if not settings.has_shannon_configured:
+            return self._fallback_next_step(existing_techniques)
+
+        # Format konteks dari hasil eksekusi sebelumnya
+        results_text = ""
+        if previous_results:
+            lines = []
+            for r in previous_results:
+                detail = (r.get("result_detail") or "")[:400]
+                lines.append(
+                    f"[{r.get('tactic','?')}] {r.get('technique_id','?')} — "
+                    f"status={r.get('status','?')}\n  Output: {detail}"
+                )
+            results_text = "\n".join(lines)
+
+        # Agent context
+        if agent:
+            os_type = agent.os_type or "windows"
+            privilege = agent.privilege_level or "user"
+            caps = agent.capabilities or []
+            agent_ctx = (
+                f"Active agent: {agent.hostname or agent.id} | OS: {os_type} | "
+                f"Privilege: {privilege} | Capabilities: {', '.join(caps) or 'shell'}"
+            )
+            avail_types = ["shell_command"]
+            if any(c in caps for c in ("powershell", "execute_powershell")):
+                avail_types.append("powershell")
+            if any(c in caps for c in ("python_exec", "execute_python")):
+                avail_types.append("python_exec")
+        else:
+            os_type = "windows"
+            privilege = "unknown"
+            agent_ctx = "No live agent (simulation mode)"
+            avail_types = ["shell_command", "powershell", "python_exec"]
+
+        already_done = ", ".join(existing_techniques) if existing_techniques else "none"
+
+        system_prompt = (
+            "You are a senior red team operator advising on the next move in an authorized "
+            "adversary emulation engagement.\n\n"
+            "CONTEXT:\n"
+            f"- Environment: {environment.upper()} network\n"
+            f"- {agent_ctx}\n"
+            f"- Target: {target or 'active agent host'}\n"
+            f"- Techniques already executed: {already_done}\n\n"
+            "POST-COMPROMISE KILL CHAIN LOGIC:\n"
+            "If an agent is already running inside the network, skip pre-compromise phases "
+            "(Reconnaissance, Resource Development, Initial Access). Focus on:\n"
+            "  Discovery → Privilege Escalation → Defense Evasion → Credential Access → "
+            "Lateral Movement → Collection → Exfiltration → Impact\n\n"
+            "TECHNIQUE SELECTION RULES:\n"
+            "1. Use the execution output from previous steps to inform the next technique. "
+            "If recon found open ports (e.g., SMB 445), recommend lateral movement via SMB. "
+            "If credentials were harvested, recommend pass-the-hash or credential reuse. "
+            "If running as low-privilege user, prioritize privilege escalation.\n"
+            "2. Pick the MOST VALUABLE next step given what was discovered — not a random technique.\n"
+            "3. Generate a CONCRETE, actionable command using information from previous results "
+            "(real hostnames, IPs, usernames, file paths discovered).\n"
+            "4. Do NOT repeat already-executed techniques.\n"
+            "5. Use appropriate tools for the OS (mimikatz/Rubeus on Windows, secretsdump on Linux).\n\n"
+            "Respond with valid JSON only."
+        )
+
+        art_context_note = ""
+        # Quick check if ART has tests for common next-step techniques
+        from core.intel.art_loader import has_atomic_tests
+        common_next = ["T1046", "T1082", "T1016", "T1003.001", "T1548.002", "T1021.002", "T1074", "T1041"]
+        art_covered = [t for t in common_next if has_atomic_tests(t)]
+        if art_covered:
+            art_context_note = (
+                f"\nNOTE: Atomic Red Team library has battle-tested payloads for: "
+                f"{', '.join(art_covered[:5])}. Consider these if they fit the scenario."
+            )
+
+        user_prompt = (
+            f"EXECUTION HISTORY (previous steps in this campaign):\n"
+            f"{results_text or '(no executions yet — this is the first step)'}\n\n"
+            f"{art_context_note}\n"
+            f"Available task types: {', '.join(avail_types)}\n\n"
+            f"Based on all of the above, recommend the single most impactful next ATT&CK technique "
+            f"and generate a ready-to-run command that USES specific information discovered "
+            f"in previous steps (hostnames, IPs, services, credentials, paths).\n\n"
+            f"Return JSON:\n"
+            '{{"technique_id": "T1234.001", '
+            '"technique_name": "Full MITRE name", '
+            '"tactic": "tactic-slug (e.g. lateral-movement)", '
+            '"rationale": "2-3 sentences: why this technique now, what was found that makes it relevant, '
+            'what impact it achieves", '
+            '"command": "full ready-to-run command (incorporate real discovered values)", '
+            '"task_type": "shell_command|powershell|python_exec", '
+            '"explanation": "one sentence: exactly what this command does", '
+            '"confidence": "high|medium|low"}}'
+        )
+
+        try:
+            data = await self._shannon_post(
+                settings=settings,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=1000,
+                response_format={"type": "json_object"},
+                timeout=50.0,
+            )
+            result = _json.loads(data["choices"][0]["message"]["content"])
+
+            # Validate required fields
+            if not result.get("technique_id") or not result.get("command"):
+                raise ValueError("Shannon returned incomplete suggestion")
+
+            # Normalize
+            tid = result["technique_id"].upper().strip()
+            result["technique_id"] = tid
+
+            # Check ART coverage for the suggested technique
+            from core.intel.art_loader import load_atomic_tests
+            art_tests = load_atomic_tests(tid, platform_filter=os_type if agent else None)
+            result["art_count"] = len(art_tests)
+            result["art_tests"] = [
+                {
+                    "label": f"[ART] {t['name'][:50]}",
+                    "task_type": t["task_type"],
+                    "command": t["command"],
+                    "explanation": t["description"][:200] if t["description"] else t["name"],
+                    "source": "art",
+                    "guid": t["guid"],
+                    "cleanup_command": t["cleanup_command"],
+                    "elevation_required": t["elevation_required"],
+                }
+                for t in art_tests[:4]
+            ]
+
+            return result
+
+        except Exception as e:
+            msg = str(e)
+            if "rate-limited" in msg.lower() or "429" in msg or "quota" in msg.lower() or "402" in msg:
+                raise
+            logger.error("suggest_next_step gagal: {}", e)
+            return self._fallback_next_step(existing_techniques)
+
+    @staticmethod
+    def _fallback_next_step(existing_techniques: list[str]) -> dict:
+        """Fallback saat Shannon tidak tersedia — rekomendasikan berdasarkan urutan kill chain."""
+        done = set(existing_techniques or [])
+        # Ordered post-compromise sequence
+        sequence = [
+            ("T1082", "System Information Discovery", "discovery"),
+            ("T1016", "System Network Configuration Discovery", "discovery"),
+            ("T1046", "Network Service Discovery", "discovery"),
+            ("T1018", "Remote System Discovery", "discovery"),
+            ("T1548.002", "Abuse Elevation Control Mechanism: Bypass UAC", "privilege-escalation"),
+            ("T1003.001", "OS Credential Dumping: LSASS Memory", "credential-access"),
+            ("T1021.002", "Remote Services: SMB/Windows Admin Shares", "lateral-movement"),
+            ("T1074.001", "Data Staged: Local Data Staging", "collection"),
+            ("T1041", "Exfiltration Over C2 Channel", "exfiltration"),
+        ]
+        for tid, name, tactic in sequence:
+            if tid not in done and not any(e.startswith(tid.split(".")[0]) for e in done):
+                return {
+                    "technique_id": tid,
+                    "technique_name": name,
+                    "tactic": tactic,
+                    "rationale": f"Standard post-compromise kill chain step after current progress.",
+                    "command": f"# Plan this step to get Shannon recommendation for {tid}",
+                    "task_type": "shell_command",
+                    "explanation": f"Next logical kill chain step: {tactic}",
+                    "confidence": "low",
+                    "art_count": 0,
+                    "art_tests": [],
+                }
+        return {
+            "technique_id": "T1041",
+            "technique_name": "Exfiltration Over C2 Channel",
+            "tactic": "exfiltration",
+            "rationale": "All major kill chain phases covered. Consider exfiltration.",
+            "command": "# Plan exfiltration step",
+            "task_type": "shell_command",
+            "explanation": "Final kill chain phase.",
+            "confidence": "low",
+            "art_count": 0,
+            "art_tests": [],
+        }
 
     @staticmethod
     def _fallback_plan(technique_id: str, agent: "Agent | None") -> dict:

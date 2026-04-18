@@ -305,11 +305,13 @@ function StatCard({ icon, color = "blue", title, value, sub, onClick }) {
 const NAV = [
   { id:"dashboard",   label:"Dashboard",       icon:"fa-gauge-high" },
   { id:"campaigns",   label:"Campaigns",        icon:"fa-crosshairs" },
+  { id:"ai-builder",  label:"AI Builder",       icon:"fa-wand-magic-sparkles" },
   { id:"techniques",  label:"Techniques",       icon:"fa-book-open" },
   { id:"aptprofiles", label:"APT Profiles",     icon:"fa-user-secret" },
   { id:"agents",      label:"Agents",           icon:"fa-robot" },
   { id:"purple",      label:"Purple Team",      icon:"fa-shield-halved" },
   { id:"reports",     label:"Reports & STIX",   icon:"fa-file-export" },
+  { id:"settings",    label:"Settings",          icon:"fa-gear", bottom: true },
 ];
 
 function Sidebar({ page, setPage }) {
@@ -325,7 +327,7 @@ function Sidebar({ page, setPage }) {
         </div>
       </div>
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {NAV.map(n => (
+        {NAV.filter(n => !n.bottom).map(n => (
           <button key={n.id} onClick={() => setPage(n.id)}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left sidebar-hover ${page === n.id ? "sidebar-active text-white" : "text-purple-200 opacity-80"}`}>
             <i className={`fa-solid ${n.icon} w-4 text-center text-sm`}></i>
@@ -333,11 +335,18 @@ function Sidebar({ page, setPage }) {
           </button>
         ))}
       </nav>
-      <div className="p-3" style={{borderTop:"1px solid rgba(255,255,255,0.1)"}}>
+      <div className="p-3 space-y-0.5" style={{borderTop:"1px solid rgba(255,255,255,0.1)"}}>
+        {NAV.filter(n => n.bottom).map(n => (
+          <button key={n.id} onClick={() => setPage(n.id)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left sidebar-hover ${page === n.id ? "sidebar-active text-white" : "text-purple-200 opacity-80"}`}>
+            <i className={`fa-solid ${n.icon} w-4 text-center text-sm`}></i>
+            {n.label}
+          </button>
+        ))}
         <a href="http://localhost:8000/docs" target="_blank"
-          className="flex items-center gap-2 text-xs sidebar-hover transition-all px-3 py-2 rounded-lg"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left sidebar-hover"
           style={{color:"rgba(196,181,253,0.6)"}}>
-          <i className="fa-solid fa-terminal text-xs"></i>Swagger API Docs
+          <i className="fa-solid fa-terminal w-4 text-center text-sm"></i>API Docs
         </a>
       </div>
     </aside>
@@ -345,7 +354,7 @@ function Sidebar({ page, setPage }) {
 }
 
 function Topbar({ page, online }) {
-  const TITLES = { dashboard:"Dashboard", campaigns:"Campaigns", techniques:"Technique Library", aptprofiles:"APT Profiles", agents:"Agent Framework", purple:"Purple Team", reports:"Reports & STIX Export" };
+  const TITLES = { dashboard:"Dashboard", campaigns:"Campaigns", "ai-builder":"AI Campaign Builder", techniques:"Technique Library", aptprofiles:"APT Profiles", agents:"Agent Framework", purple:"Purple Team", reports:"Reports & STIX Export", settings:"Settings" };
   return (
     <header className="h-14 px-6 flex items-center justify-between shrink-0" style={{background:"#ffffff", borderBottom:"1px solid #E2E8F0", boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
       <div className="flex items-center gap-2">
@@ -360,6 +369,358 @@ function Topbar({ page, online }) {
         {online===true?"API Online":online===false?"API Offline":"Connecting…"}
       </div>
     </header>
+  );
+}
+
+// ─── Campaign Builder ─────────────────────────────────────────────────────────
+const BUILDER_OBJECTIVES = [
+  { id:"initial_access",       label:"Initial Access",        icon:"fa-door-open",           desc:"Phishing, exploit public-facing app" },
+  { id:"execution",            label:"Execution",             icon:"fa-terminal",            desc:"Run attacker-controlled code" },
+  { id:"persistence",          label:"Persistence",           icon:"fa-anchor",              desc:"Survive reboot, registry/service" },
+  { id:"privilege_escalation", label:"Privilege Escalation",  icon:"fa-arrow-up",            desc:"UAC bypass, token impersonation" },
+  { id:"lateral_movement",     label:"Lateral Movement",      icon:"fa-arrows-left-right",   desc:"Move to other hosts, PsExec/WMI" },
+  { id:"credential_theft",     label:"Credential Theft",      icon:"fa-key",                 desc:"LSASS dump, SAM, Kerberos tickets" },
+  { id:"data_collection",      label:"Data Collection",       icon:"fa-folder-open",         desc:"Stage sensitive files for exfil" },
+  { id:"data_exfiltration",    label:"Data Exfiltration",     icon:"fa-cloud-arrow-up",      desc:"Transfer data out of network" },
+  { id:"c2_establishment",     label:"C2 Establishment",      icon:"fa-tower-broadcast",     desc:"HTTP beacon, DNS tunnel, C2 channel" },
+  { id:"impact",               label:"Impact",                icon:"fa-burst",               desc:"Encrypt, delete, disrupt services" },
+  { id:"full_chain",           label:"Full Kill Chain",       icon:"fa-link",                desc:"All phases from access to impact" },
+];
+
+function CampaignBuilder({ navigate }) {
+  const [profiles, setProfiles] = useState([]);
+  const [form, setForm] = useState({
+    name:"", client_name:"", description:"", environment:"it",
+    objectives:["initial_access","lateral_movement","data_exfiltration"],
+    apt_profile_id:"", max_risk:"high", max_steps:10,
+    roe:"", emergency_contact:"", target_ips:[],
+  });
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    apiFetch("/apt-profiles/").then(setProfiles).catch(() => {});
+  }, []);
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+  function toggleObj(id) {
+    if (id === "full_chain") { set("objectives", ["full_chain"]); return; }
+    const without = form.objectives.filter(o => o !== "full_chain");
+    set("objectives", without.includes(id) ? without.filter(o => o !== id) : [...without, id]);
+  }
+
+  function buildParams(extra = {}) {
+    const p = new URLSearchParams();
+    p.append("campaign_name", form.name);
+    p.append("environment", form.environment);
+    form.objectives.forEach(o => p.append("objectives", o));
+    if (form.apt_profile_id) p.append("apt_profile_id", form.apt_profile_id);
+    p.append("max_risk", form.max_risk);
+    p.append("max_steps", String(form.max_steps));
+    if (form.description) p.append("description", form.description);
+    Object.entries(extra).forEach(([k,v]) => {
+      if (Array.isArray(v)) v.forEach(x => p.append(k, x));
+      else if (v) p.append(k, v);
+    });
+    return p;
+  }
+
+  async function buildPreview() {
+    if (!form.name.trim()) { setErr("Isi nama kampanye terlebih dahulu."); return; }
+    if (!form.objectives.length) { setErr("Pilih minimal 1 objective."); return; }
+    setPreviewLoading(true); setErr(""); setPreview(null);
+    try {
+      const data = await apiFetch(`/builder/generate?${buildParams()}`, { method:"POST", _timeout:120000 });
+      setPreview(data);
+    } catch(ex) { setErr(ex.message); }
+    finally { setPreviewLoading(false); }
+  }
+
+  async function saveAndOpen() {
+    const missing = [
+      [form.name,             "Campaign Name"],
+      [form.client_name,      "Client Name"],
+      [form.roe,              "Rules of Engagement"],
+      [form.emergency_contact,"Emergency Contact"],
+    ].filter(([v]) => !v.trim()).map(([,l]) => l);
+    if (missing.length) { setErr(`Wajib diisi: ${missing.join(", ")}`); return; }
+    if (!form.target_ips.length) { setErr("Isi minimal 1 Target IP/CIDR."); return; }
+    if (!form.objectives.length) { setErr("Pilih minimal 1 objective."); return; }
+    setSaving(true); setErr("");
+    try {
+      const extra = {
+        client_name: form.client_name,
+        rules_of_engagement: form.roe,
+        emergency_contact: form.emergency_contact,
+        target_ips: form.target_ips,
+      };
+      const data = await apiFetch(`/builder/generate-and-save?${buildParams(extra)}`, { method:"POST", _timeout:120000 });
+      navigate("campaign-detail", { id: data.campaign_id });
+    } catch(ex) { setErr(ex.message); }
+    finally { setSaving(false); }
+  }
+
+  const RISK_COLOR = { low:"#16a34a", medium:"#d97706", high:"#dc2626", critical:"#7e22ce" };
+  const busy = previewLoading || saving;
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate("campaigns")} className="btn-ghost btn-sm"><i className="fa-solid fa-arrow-left"></i>Back</button>
+            <h1 className="text-xl font-bold text-slate-900">
+              <i className="fa-solid fa-wand-magic-sparkles mr-2" style={{color:"#7C3AED"}}></i>AI Campaign Builder
+            </h1>
+          </div>
+          <p className="text-sm text-slate-500 mt-1 ml-[88px]">Shannon AI auto-generates a full kill chain from your objectives and APT profile</p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <button onClick={buildPreview} disabled={busy} className="btn-secondary">
+            {previewLoading
+              ? <><i className="fa-solid fa-circle-notch spin mr-2"></i>Generating preview…</>
+              : <><i className="fa-solid fa-eye mr-2"></i>Preview</>}
+          </button>
+          <button onClick={saveAndOpen} disabled={busy} className="btn-primary">
+            {saving
+              ? <><i className="fa-solid fa-circle-notch spin mr-2"></i>Generating & Saving…</>
+              : <><i className="fa-solid fa-floppy-disk mr-2"></i>Generate & Save</>}
+          </button>
+        </div>
+      </div>
+
+      <Alert msg={err} onClose={() => setErr("")} />
+
+      <div className="grid grid-cols-5 gap-5 items-start">
+        {/* ── Left: Config Form ── */}
+        <div className="col-span-2 space-y-4">
+
+          {/* Campaign Identity */}
+          <div className="card p-5 space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Campaign Identity</p>
+            <FormField label="Campaign Name" required>
+              <input className="input-field" placeholder="APT29 Simulation Q2 2025" value={form.name} onChange={e=>set("name",e.target.value)} />
+            </FormField>
+            <FormField label="Client Name" required>
+              <input className="input-field" placeholder="ACME Corp" value={form.client_name} onChange={e=>set("client_name",e.target.value)} />
+            </FormField>
+            <FormField label="Description">
+              <textarea className="input-field" placeholder="Optional — AI will auto-generate if blank" rows={2} value={form.description} onChange={e=>set("description",e.target.value)} />
+            </FormField>
+          </div>
+
+          {/* Environment & Profile */}
+          <div className="card p-5 space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Target Environment</p>
+            <FormField label="Environment" required>
+              <select className="input-field" value={form.environment} onChange={e=>set("environment",e.target.value)}>
+                <option value="it">Enterprise IT</option>
+                <option value="ot">OT / ICS</option>
+                <option value="hybrid_it_ot">Hybrid IT + OT</option>
+              </select>
+            </FormField>
+            <FormField label="APT Profile (optional)">
+              <select className="input-field" value={form.apt_profile_id} onChange={e=>set("apt_profile_id",e.target.value)}>
+                <option value="">— No specific APT (custom) —</option>
+                {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Target IPs / CIDR" required hint="One per line">
+              <ListTextarea
+                value={form.target_ips}
+                onChange={v => set("target_ips", v)}
+                placeholder={"192.168.1.0/24\n10.0.0.1"}
+                rows={3}
+              />
+            </FormField>
+          </div>
+
+          {/* Advanced */}
+          <div className="card p-5 space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Builder Config</p>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Max Risk">
+                <select className="input-field" value={form.max_risk} onChange={e=>set("max_risk",e.target.value)}>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </FormField>
+              <FormField label={`Max Steps (${form.max_steps})`}>
+                <input type="range" min={3} max={20} value={form.max_steps} onChange={e=>set("max_steps",parseInt(e.target.value))}
+                  className="w-full mt-2 accent-purple-600" />
+              </FormField>
+            </div>
+          </div>
+
+          {/* RoE */}
+          <div className="card p-5 space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Engagement Details</p>
+            <FormField label="Rules of Engagement" required>
+              <textarea className="input-field" placeholder="No production system disruption. Avoid PII data…" rows={3} value={form.roe} onChange={e=>set("roe",e.target.value)} />
+            </FormField>
+            <FormField label="Emergency Contact" required>
+              <input className="input-field" placeholder="+62-xxx or security@company.com" value={form.emergency_contact} onChange={e=>set("emergency_contact",e.target.value)} />
+            </FormField>
+          </div>
+        </div>
+
+        {/* ── Right: Objectives + Preview ── */}
+        <div className="col-span-3 space-y-4">
+
+          {/* Objectives */}
+          <div className="card p-5">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Objectives <span className="text-red-500">*</span></p>
+            <div className="grid grid-cols-2 gap-2">
+              {BUILDER_OBJECTIVES.map(o => {
+                const active = form.objectives.includes(o.id);
+                return (
+                  <button key={o.id} type="button" onClick={() => toggleObj(o.id)}
+                    className="text-left px-3 py-2.5 rounded-lg border transition-all"
+                    style={active
+                      ? {background:"#EDE9FE",border:"1.5px solid #7C3AED",boxShadow:"0 0 0 1px rgba(124,58,237,0.15)"}
+                      : {background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <i className={`fa-solid ${o.icon} text-xs ${active?"":"text-slate-400"}`}
+                        style={active?{color:"#7C3AED"}:{}}></i>
+                      <span className={`text-xs font-semibold ${active?"text-purple-700":"text-slate-700"}`}>{o.label}</span>
+                      {active && <i className="fa-solid fa-check text-[9px] ml-auto" style={{color:"#7C3AED"}}></i>}
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-snug">{o.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+            {form.objectives.length > 0 && (
+              <p className="text-xs text-slate-400 mt-3">
+                {form.objectives.length} objective{form.objectives.length>1?"s":""} selected · AI will select up to <strong>{form.max_steps}</strong> techniques
+              </p>
+            )}
+          </div>
+
+          {/* Preview Panel */}
+          {!preview && !previewLoading && (
+            <div className="card p-12 text-center">
+              <i className="fa-solid fa-wand-magic-sparkles text-5xl mb-4 block" style={{color:"#DDD6FE"}}></i>
+              <p className="text-slate-500 text-sm mb-5">Configure the form and click <strong>Preview</strong> to see the AI-generated kill chain before saving.</p>
+              <button onClick={buildPreview} disabled={busy} className="btn-secondary">
+                <i className="fa-solid fa-eye mr-2"></i>Preview Campaign
+              </button>
+            </div>
+          )}
+
+          {previewLoading && (
+            <div className="card p-12 text-center">
+              <i className="fa-solid fa-circle-notch spin text-3xl mb-4 block" style={{color:"#7C3AED"}}></i>
+              <p className="text-slate-500 text-sm">Shannon AI is generating your kill chain…</p>
+              <p className="text-xs text-slate-400 mt-1">This may take 15–30 seconds</p>
+            </div>
+          )}
+
+          {preview && !previewLoading && (
+            <div className="card overflow-hidden fade-in">
+              {/* Preview header */}
+              <div className="px-5 py-4 flex items-center justify-between" style={{background:"#F5F3FF",borderBottom:"1px solid #DDD6FE"}}>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <i className="fa-solid fa-wand-magic-sparkles" style={{color:"#7C3AED"}}></i>
+                    <span className="font-semibold text-slate-900">{preview.name}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">{preview.apt_profile ? `APT: ${preview.apt_profile}` : "Custom profile"} · {preview.environment?.toUpperCase()}</p>
+                </div>
+                <button onClick={buildPreview} disabled={busy} className="btn-sm btn-ghost">
+                  <i className="fa-solid fa-rotate mr-1"></i>Regenerate
+                </button>
+              </div>
+
+              {/* Stats strip */}
+              <div className="grid grid-cols-4" style={{borderBottom:"1px solid #E2E8F0"}}>
+                {[
+                  ["Steps",        preview.total_steps,               "#2563eb"],
+                  ["Implemented",  preview.implemented_steps,         "#16a34a"],
+                  ["Coverage",     `${Math.round((preview.implementation_coverage||0)*100)}%`, "#7C3AED"],
+                  ["Est. Duration",`${preview.estimated_duration_hours?.toFixed(1)}h`, "#d97706"],
+                ].map(([l,v,c],i) => (
+                  <div key={l} className="px-4 py-3 text-center" style={i>0?{borderLeft:"1px solid #E2E8F0"}:{}}>
+                    <div className="text-xl font-bold" style={{color:c}}>{v}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* AI Overview */}
+              {preview.ai_overview && (
+                <div className="px-5 py-3 text-sm text-slate-600 leading-relaxed" style={{background:"#FAFAFE",borderBottom:"1px solid #E2E8F0"}}>
+                  <i className="fa-solid fa-brain mr-2 text-xs" style={{color:"#7C3AED"}}></i>
+                  {preview.ai_overview}
+                </div>
+              )}
+
+              {/* Risk summary */}
+              {preview.risk_summary && (
+                <div className="px-5 py-2.5 flex items-center gap-3 text-xs" style={{borderBottom:"1px solid #E2E8F0",background:"#F8FAFC"}}>
+                  <span className="font-semibold text-slate-500 uppercase tracking-wider">Risk:</span>
+                  {Object.entries(preview.risk_summary).filter(([,n])=>n>0).map(([r,n]) => (
+                    <span key={r} className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full inline-block" style={{background:RISK_COLOR[r]}}></span>
+                      <span className="font-semibold" style={{color:RISK_COLOR[r]}}>{n}</span>
+                      <span className="text-slate-400">{r}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Steps list */}
+              <div className="divide-y" style={{borderColor:"#E2E8F0",maxHeight:"440px",overflowY:"auto"}}>
+                {(preview.steps || []).map((s, i) => (
+                  <div key={i} className="px-5 py-3 flex items-start gap-3">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5"
+                      style={{background:"#EDE9FE",color:"#7C3AED"}}>{s.order}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs font-bold" style={{color:"#7C3AED"}}>{s.technique_id}</span>
+                        <span className="text-sm font-semibold text-slate-900">{s.technique_name}</span>
+                        <span className={`badge badge-${s.risk_level}`}>{s.risk_level}</span>
+                        {s.is_implemented && (
+                          <span className="badge" style={{background:"#DCFCE7",color:"#16a34a",border:"1px solid #BBF7D0"}}>
+                            <i className="fa-solid fa-code mr-1 text-[9px]"></i>impl
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-400 ml-auto">{s.phase}</span>
+                      </div>
+                      {s.ai_reasoning && (
+                        <p className="text-xs text-slate-500 mt-1 leading-relaxed">{s.ai_reasoning}</p>
+                      )}
+                      {s.method_hint && (
+                        <p className="text-xs mt-0.5 font-mono" style={{color:"#0369a1"}}>Method: {s.method_hint}</p>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-400 shrink-0 mt-0.5">
+                      {Math.round((s.estimated_success_rate||0)*100)}% success
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Save CTA */}
+              <div className="px-5 py-4 flex items-center justify-between" style={{background:"#F8FAFC",borderTop:"1px solid #E2E8F0"}}>
+                <p className="text-xs text-slate-500">Happy with the plan? Save it to start execution.</p>
+                <button onClick={saveAndOpen} disabled={busy} className="btn-primary">
+                  {saving
+                    ? <><i className="fa-solid fa-circle-notch spin mr-2"></i>Saving…</>
+                    : <><i className="fa-solid fa-floppy-disk mr-2"></i>Save to Platform</>}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -386,12 +747,14 @@ function App() {
             {page === "dashboard"      && <Dashboard navigate={navigate} />}
             {page === "campaigns"      && <Campaigns navigate={navigate} />}
             {page === "campaign-detail"&& <CampaignDetail id={pageParams.id} navigate={navigate} />}
+            {page === "ai-builder"     && <CampaignBuilder navigate={navigate} />}
             {page === "techniques"     && <Techniques />}
             {page === "aptprofiles"    && <AptProfiles />}
             {page === "agents"         && <Agents />}
             {page === "purple"         && <PurpleTeam navigate={navigate} />}
             {page === "purple-detail"  && <PurpleDetail id={pageParams.id} navigate={navigate} />}
             {page === "reports"        && <Reports />}
+            {page === "settings"       && <PlatformSettings />}
           </div>
         </main>
       </div>
@@ -433,11 +796,12 @@ function Dashboard({ navigate }) {
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 card p-5">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Quick Actions</p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             {[
-              { icon:"fa-plus",          label:"New Campaign",       bg:"#2563EB", page:"campaigns" },
-              { icon:"fa-shield-halved", label:"Purple Session",     bg:"#0e7490", page:"purple" },
-              { icon:"fa-file-export",   label:"Reports & STIX",    bg:"#047857", page:"reports" },
+              { icon:"fa-plus",                  label:"New Campaign",       bg:"#2563EB", page:"campaigns" },
+              { icon:"fa-wand-magic-sparkles",   label:"AI Builder",         bg:"#7C3AED", page:"ai-builder" },
+              { icon:"fa-shield-halved",         label:"Purple Session",     bg:"#0e7490", page:"purple" },
+              { icon:"fa-file-export",           label:"Reports & STIX",    bg:"#047857", page:"reports" },
             ].map(a => (
               <button key={a.page} onClick={() => navigate(a.page)}
                 className="rounded-xl p-5 flex flex-col items-center gap-2 text-sm font-semibold text-white transition-all hover:brightness-125"
@@ -528,9 +892,14 @@ function Campaigns({ navigate }) {
           <h1 className="text-xl font-bold text-slate-900">Campaigns</h1>
           <p className="text-sm text-slate-500 mt-1">Manage adversary emulation engagements</p>
         </div>
-        <button className="btn-primary" onClick={() => { setErr(""); setShowForm(true); }}>
-          <i className="fa-solid fa-plus mr-2"></i>New Campaign
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-secondary" onClick={() => navigate("ai-builder")}>
+            <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>AI Builder
+          </button>
+          <button className="btn-primary" onClick={() => { setErr(""); setShowForm(true); }}>
+            <i className="fa-solid fa-plus mr-2"></i>New Campaign
+          </button>
+        </div>
       </div>
 
       <Alert msg={err} onClose={() => setErr("")} />
@@ -919,6 +1288,7 @@ function CampaignDetail({ id, navigate }) {
   const [planData, setPlanData] = useState(() => loadPlanCache().planData || {});
   const [editedCmd, setEditedCmd] = useState(() => loadPlanCache().editedCmd || {});
   const [editedType, setEditedType] = useState(() => loadPlanCache().editedType || {});
+  const [cleanupCmd, setCleanupCmd] = useState({});   // step_id → cleanup_command (ART)
   const [stepForm, setStepForm] = useState({ phase:"initial_access", technique_id:"", method:"", notes:"", order_index:1, risk_assessment:"medium" });
   const [techSearch, setTechSearch] = useState("");
   const [techSuggestions, setTechSuggestions] = useState([]);
@@ -926,6 +1296,9 @@ function CampaignDetail({ id, navigate }) {
   const [techSearchLoading, setTechSearchLoading] = useState(false);
   const [evadeLoading, setEvadeLoading] = useState({});
   const [evadeData, setEvadeData] = useState({});
+  const [nextStepLoading, setNextStepLoading] = useState(false);
+  const [nextStepSuggestion, setNextStepSuggestion] = useState(null);
+  const [nextStepErr, setNextStepErr] = useState("");
   const [scriptState, setScriptState] = useState(() => loadPlanCache().scriptState || {});
   const [deletingStep, setDeletingStep] = useState(null);
   const [showConfirm, ConfirmNode] = useConfirm();
@@ -1066,6 +1439,12 @@ function CampaignDetail({ id, navigate }) {
     try {
       let url = `/campaigns/${id}/steps/${stepId}/plan?target=${encodeURIComponent(target)}`;
       if (evCtx) url += `&evasion_context=${encodeURIComponent(evCtx)}`;
+      // Build chain context from previous steps' execution results
+      const prevCtx = Object.values(stepResults)
+        .filter(r => r.step_id !== stepId && r.result_detail)
+        .map(r => `[${r.technique_id||'?'}/${r.status}] ${(r.result_detail||'').slice(0, 300)}`)
+        .join('\n');
+      if (prevCtx) url += `&campaign_context=${encodeURIComponent(prevCtx)}`;
       const plan = await apiFetch(url);
       setPlanData(prev => ({ ...prev, [stepId]: plan }));
       setEditedCmd(prev => ({ ...prev, [stepId]: plan.command }));
@@ -1149,6 +1528,12 @@ function CampaignDetail({ id, navigate }) {
   function applyAlternative(stepId, alt) {
     setEditedCmd(prev => ({ ...prev, [stepId]: alt.command }));
     setEditedType(prev => ({ ...prev, [stepId]: alt.task_type }));
+    // Simpan cleanup_command jika dari ART
+    if (alt.source === "art" && alt.cleanup_command) {
+      setCleanupCmd(prev => ({ ...prev, [stepId]: alt.cleanup_command }));
+    } else {
+      setCleanupCmd(prev => { const n={...prev}; delete n[stepId]; return n; });
+    }
     // Re-detect script URLs in the applied alternative
     const found = detectScriptUrls(alt.command);
     setScriptState(prev => {
@@ -1184,6 +1569,39 @@ function CampaignDetail({ id, navigate }) {
       await planStep(stepId, evCtx);
     } catch(ex) { setErr(ex.message); }
     finally { setEvadeLoading(prev => ({ ...prev, [stepId]: false })); }
+  }
+
+  async function suggestNextStep() {
+    setNextStepLoading(true);
+    setNextStepErr("");
+    setNextStepSuggestion(null);
+    // Build previous_results dari semua stepResults yang sudah ada
+    const previous = Object.values(stepResults)
+      .filter(r => r.result_detail)
+      .map(r => ({
+        technique_id: r.technique_id || "",
+        tactic: r.tactic || "",
+        status: r.status || "",
+        result_detail: (r.result_detail || "").slice(0, 500),
+      }));
+    const existingTech = steps.map(s => s.technique_id).filter(Boolean);
+    // Cari target dari step yang sudah dieksekusi
+    const anyTarget = Object.values(stepResults).map(r => r.target).find(Boolean) || "";
+    try {
+      const suggestion = await apiFetch(`/campaigns/${id}/suggest-next-step`, {
+        method: "POST",
+        body: JSON.stringify({
+          target: anyTarget,
+          previous_results: previous,
+          existing_techniques: existingTech,
+        }),
+      });
+      setNextStepSuggestion(suggestion);
+    } catch(ex) {
+      setNextStepErr(ex.message);
+    } finally {
+      setNextStepLoading(false);
+    }
   }
 
   async function generateScript(stepId, scriptRef, commandContext) {
@@ -1676,11 +2094,25 @@ function CampaignDetail({ id, navigate }) {
                             />
                           </div>
 
-                          {/* ── Alternatives ── */}
+                          {/* ── ART Cleanup Command hint ── */}
+                          {cleanupCmd[s.id] && (
+                            <div className="flex items-start gap-2 text-xs px-3 py-2 rounded-lg"
+                              style={{background:"#FDF4FF",border:"1px solid #E9D5FF"}}>
+                              <i className="fa-solid fa-broom mt-0.5" style={{color:"#9333ea"}}></i>
+                              <div>
+                                <span className="font-semibold" style={{color:"#7e22ce"}}>ART Cleanup Command:</span>
+                                <code className="ml-2 text-xs" style={{
+                                  fontFamily:"'JetBrains Mono',monospace",color:"#6d28d9",opacity:0.85
+                                }}>{cleanupCmd[s.id].slice(0, 200)}</code>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* ── Shannon AI Alternatives ── */}
                           {panelPlan.alternatives?.length > 0 && (
                             <div>
                               <p className="text-xs text-slate-600 uppercase tracking-wider mb-2 font-medium">
-                                <i className="fa-solid fa-code-branch mr-1.5"></i>Alternative payloads
+                                <i className="fa-solid fa-code-branch mr-1.5"></i>Shannon AI — Alternative payloads
                               </p>
                               <div className="grid gap-2" style={{gridTemplateColumns:"repeat(auto-fill,minmax(255px,1fr))"}}>
                                 {panelPlan.alternatives.map((alt, i) => (
@@ -1709,6 +2141,61 @@ function CampaignDetail({ id, navigate }) {
                                       fontFamily:"'JetBrains Mono','Fira Code',monospace",
                                       color:"#0369a1",opacity:0.85
                                     }} title={alt.command}>{alt.command}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* ── Atomic Red Team Alternatives ── */}
+                          {panelPlan.art_alternatives?.length > 0 && (
+                            <div>
+                              <p className="text-xs uppercase tracking-wider mb-2 font-medium flex items-center gap-2"
+                                style={{color:"#7c3aed"}}>
+                                <i className="fa-solid fa-atom"></i>
+                                Atomic Red Team — Battle-tested payloads
+                                <span className="normal-case font-normal text-xs px-1.5 py-0.5 rounded"
+                                  style={{background:"#EDE9FE",color:"#7c3aed",border:"1px solid #DDD6FE"}}>
+                                  {panelPlan.art_alternatives.length} test{panelPlan.art_alternatives.length>1?"s":""}
+                                </span>
+                              </p>
+                              <div className="grid gap-2" style={{gridTemplateColumns:"repeat(auto-fill,minmax(255px,1fr))"}}>
+                                {panelPlan.art_alternatives.map((alt, i) => (
+                                  <button key={i} type="button"
+                                    className="text-left p-3 rounded-lg transition-all"
+                                    style={{background:"#FEFCE8",border:"1px solid #DDD6FE"}}
+                                    onClick={()=>applyAlternative(s.id, alt)}
+                                    onMouseEnter={e=>{e.currentTarget.style.borderColor="#7c3aed";e.currentTarget.style.background="#F5F3FF"}}
+                                    onMouseLeave={e=>{e.currentTarget.style.borderColor="#DDD6FE";e.currentTarget.style.background="#FEFCE8"}}>
+                                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                      <span className="text-xs font-semibold" style={{color:"#7c3aed"}}>
+                                        {alt.label}
+                                      </span>
+                                      <span className="text-xs px-1.5 rounded"
+                                        style={{background:"#EDE9FE",color:"#7c3aed",border:"1px solid #DDD6FE"}}>
+                                        {alt.task_type}
+                                      </span>
+                                      {alt.elevation_required && (
+                                        <span className="text-xs px-1.5 rounded"
+                                          style={{background:"#FEF2F2",color:"#dc2626",border:"1px solid #FECACA"}}>
+                                          <i className="fa-solid fa-shield-halved mr-1 text-[8px]"></i>Admin
+                                        </span>
+                                      )}
+                                      <span className="ml-auto text-xs" style={{color:"#7c3aed"}}>
+                                        <i className="fa-solid fa-arrow-right-to-bracket text-[9px]"></i>
+                                      </span>
+                                    </div>
+                                    {alt.explanation && (
+                                      <p className="text-xs mb-1.5 leading-relaxed" style={{color:"#64748b"}}>{alt.explanation}</p>
+                                    )}
+                                    <div className="text-xs truncate" style={{
+                                      fontFamily:"'JetBrains Mono','Fira Code',monospace",
+                                      color:"#6d28d9",opacity:0.9
+                                    }} title={alt.command}>{alt.command}</div>
+                                    {alt.guid && (
+                                      <div className="text-xs mt-1.5 opacity-40 truncate"
+                                        style={{fontFamily:"monospace"}}>GUID: {alt.guid}</div>
+                                    )}
                                   </button>
                                 ))}
                               </div>
@@ -1941,6 +2428,185 @@ function CampaignDetail({ id, navigate }) {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* ── Suggest Next Kill Chain Step ── */}
+      <div className="rounded-xl overflow-hidden mb-6" style={{border:"1px solid #E9D5FF"}}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3"
+          style={{background:"linear-gradient(135deg,#1e1b4b 0%,#312e81 100%)"}}>
+          <div className="flex items-center gap-2.5">
+            <i className="fa-solid fa-route text-sm" style={{color:"#a78bfa"}}></i>
+            <span className="text-sm font-semibold text-white">Kill Chain — Next Step Advisor</span>
+            <span className="text-xs px-2 py-0.5 rounded-full" style={{background:"#4c1d95",color:"#c4b5fd"}}>
+              Shannon AI
+            </span>
+          </div>
+          <button
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+            style={{background:"#7c3aed",color:"#ffffff",border:"1px solid #6d28d9"}}
+            disabled={nextStepLoading}
+            onClick={suggestNextStep}
+            onMouseEnter={e=>{if(!nextStepLoading)e.currentTarget.style.background="#6d28d9"}}
+            onMouseLeave={e=>{e.currentTarget.style.background="#7c3aed"}}>
+            {nextStepLoading
+              ? <><i className="fa-solid fa-circle-notch spin mr-1.5"></i>Analyzing…</>
+              : <><i className="fa-solid fa-wand-magic-sparkles mr-1.5 text-[10px]"></i>Suggest Next Step</>}
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4" style={{background:"#faf5ff"}}>
+          {nextStepErr && (
+            <div className="text-xs text-red-600 mb-3">{nextStepErr}</div>
+          )}
+
+          {!nextStepSuggestion && !nextStepLoading && (
+            <p className="text-xs text-slate-500 text-center py-2">
+              <i className="fa-solid fa-arrow-up mr-1.5"></i>
+              Klik "Suggest Next Step" — Shannon akan menganalisis output dari langkah-langkah sebelumnya
+              dan merekomendasikan teknik ATT&CK berikutnya yang paling relevan.
+            </p>
+          )}
+
+          {nextStepSuggestion && (() => {
+            const s = nextStepSuggestion;
+            const confidenceColor = s.confidence === "high" ? "#16a34a" : s.confidence === "medium" ? "#d97706" : "#64748b";
+            return (
+              <div className="space-y-4">
+                {/* Recommendation card */}
+                <div className="rounded-lg p-4" style={{background:"#ffffff",border:"1px solid #DDD6FE"}}>
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold" style={{color:"#7c3aed"}}>{s.technique_id}</span>
+                      <span className="text-sm font-semibold text-slate-700">{s.technique_name}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full"
+                        style={{background:"#EDE9FE",color:"#7c3aed",border:"1px solid #DDD6FE"}}>
+                        {s.tactic}
+                      </span>
+                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                        style={{background:"#f0fdf4",color:confidenceColor,border:`1px solid ${confidenceColor}30`}}>
+                        {s.confidence} confidence
+                      </span>
+                      {s.art_count > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded-full"
+                          style={{background:"#fdf4ff",color:"#9333ea",border:"1px solid #E9D5FF"}}>
+                          <i className="fa-solid fa-atom mr-1 text-[8px]"></i>{s.art_count} ART tests
+                        </span>
+                      )}
+                    </div>
+                    {/* Add as next step */}
+                    <button
+                      className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+                      style={{background:"#7c3aed",color:"#fff",border:"1px solid #6d28d9"}}
+                      onClick={async () => {
+                        try {
+                          const newStep = await apiFetch(`/campaigns/${id}/steps`, {
+                            method:"POST",
+                            body: JSON.stringify({
+                              phase: s.tactic || "discovery",
+                              technique_id: s.technique_id,
+                              method: s.command,
+                              notes: s.rationale,
+                              order_index: steps.length + 2,
+                              risk_assessment: "medium",
+                            }),
+                          });
+                          // Pre-populate planData dengan Shannon suggestion
+                          // sehingga user tidak perlu klik Plan lagi
+                          if (newStep?.id) {
+                            const suggTarget = Object.values(stepResults).map(r=>r.target).find(Boolean) || "";
+                            const planEntry = {
+                              has_agent: false,
+                              technique_id: s.technique_id,
+                              technique_name: s.technique_name,
+                              tactic: s.tactic,
+                              target: suggTarget,
+                              task_type: s.task_type,
+                              command: s.command,
+                              explanation: s.explanation || s.rationale,
+                              alternatives: [],
+                              art_alternatives: s.art_tests || [],
+                              has_art: (s.art_tests||[]).length > 0,
+                            };
+                            setPlanData(prev => ({...prev, [newStep.id]: planEntry}));
+                            setEditedCmd(prev => ({...prev, [newStep.id]: s.command}));
+                            setEditedType(prev => ({...prev, [newStep.id]: s.task_type || "shell_command"}));
+                            if (suggTarget) setRunTarget(prev => ({...prev, [newStep.id]: suggTarget}));
+                          }
+                          setNextStepSuggestion(null);
+                          load();
+                        } catch(ex) { setNextStepErr(ex.message); }
+                      }}
+                      onMouseEnter={e=>{e.currentTarget.style.background="#6d28d9"}}
+                      onMouseLeave={e=>{e.currentTarget.style.background="#7c3aed"}}>
+                      <i className="fa-solid fa-plus mr-1.5 text-[9px]"></i>Add as Next Step
+                    </button>
+                  </div>
+
+                  {/* Rationale */}
+                  <p className="text-xs leading-relaxed mb-3"
+                    style={{color:"#374151",borderLeft:"3px solid #a78bfa",paddingLeft:"0.75rem"}}>
+                    {s.rationale}
+                  </p>
+
+                  {/* Command */}
+                  <div className="rounded-lg overflow-hidden" style={{border:"1px solid #DDD6FE"}}>
+                    <div className="flex items-center justify-between px-3 py-1.5"
+                      style={{background:"#EDE9FE",borderBottom:"1px solid #DDD6FE"}}>
+                      <span className="text-xs font-semibold" style={{color:"#7c3aed"}}>
+                        <i className="fa-solid fa-terminal mr-1.5 text-[9px]"></i>Shannon-generated command
+                      </span>
+                      <span className="text-xs px-1.5 rounded"
+                        style={{background:"#DDD6FE",color:"#6d28d9",border:"1px solid #C4B5FD"}}>
+                        {s.task_type}
+                      </span>
+                    </div>
+                    <div className="px-3 py-2.5 text-xs" style={{
+                      background:"#050d18",color:"#c4b5fd",
+                      fontFamily:"'JetBrains Mono','Fira Code',monospace",
+                      whiteSpace:"pre-wrap",wordBreak:"break-word",maxHeight:"160px",overflowY:"auto"
+                    }}>{s.command}</div>
+                  </div>
+
+                  {s.explanation && (
+                    <p className="text-xs mt-2 italic" style={{color:"#64748b"}}>{s.explanation}</p>
+                  )}
+                </div>
+
+                {/* ART alternatives for suggested technique */}
+                {s.art_tests?.length > 0 && (
+                  <div>
+                    <p className="text-xs uppercase tracking-wider mb-2 font-medium flex items-center gap-2"
+                      style={{color:"#7c3aed"}}>
+                      <i className="fa-solid fa-atom text-[10px]"></i>
+                      ART Tests untuk {s.technique_id}
+                    </p>
+                    <div className="grid gap-2" style={{gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))"}}>
+                      {s.art_tests.map((art, i) => (
+                        <div key={i} className="p-3 rounded-lg text-xs"
+                          style={{background:"#ffffff",border:"1px solid #DDD6FE"}}>
+                          <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                            <span className="font-semibold" style={{color:"#7c3aed"}}>{art.label}</span>
+                            <span className="px-1.5 rounded text-[10px]"
+                              style={{background:"#EDE9FE",color:"#7c3aed"}}>{art.task_type}</span>
+                            {art.elevation_required && (
+                              <span className="px-1.5 rounded text-[10px]"
+                                style={{background:"#FEF2F2",color:"#dc2626"}}>Admin</span>
+                            )}
+                          </div>
+                          <div className="truncate" style={{
+                            fontFamily:"monospace",color:"#6d28d9",opacity:0.8
+                          }} title={art.command}>{art.command}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       <AttackPathPanel campaignId={id} />
@@ -3495,6 +4161,259 @@ function PurpleDetail({ id, navigate }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Platform Settings ────────────────────────────────────────────────────────
+function PlatformSettings() {
+  const [cfg, setCfg] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [err, setErr] = useState("");
+  const [success, setSuccess] = useState("");
+
+  // Form fields
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [maxTokens, setMaxTokens] = useState(2048);
+  const [showKey, setShowKey] = useState(false);
+  const [keyDirty, setKeyDirty] = useState(false);  // true = user typed a new key
+
+  useEffect(() => {
+    apiFetch("/settings/shannon")
+      .then(d => {
+        setCfg(d);
+        setBaseUrl(d.base_url || "");
+        setModel(d.model || "");
+        setMaxTokens(d.max_tokens || 2048);
+        // API key tidak di-prefill — user ketik ulang jika mau ubah
+      })
+      .catch(e => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save(e) {
+    e.preventDefault();
+    setSaving(true); setErr(""); setSuccess(""); setTestResult(null);
+    const body = {};
+    if (keyDirty && apiKey)   body.api_key   = apiKey;
+    if (baseUrl)              body.base_url   = baseUrl;
+    if (model)                body.model      = model;
+    if (maxTokens)            body.max_tokens = Number(maxTokens);
+    try {
+      const updated = await apiFetch("/settings/shannon", { method:"PATCH", body:JSON.stringify(body) });
+      setCfg(updated);
+      setKeyDirty(false);
+      setApiKey("");
+      setSuccess("Konfigurasi Shannon berhasil disimpan.");
+    } catch(ex) { setErr(ex.message); }
+    finally { setSaving(false); }
+  }
+
+  async function testConnection() {
+    setTesting(true); setTestResult(null); setErr("");
+    try {
+      const r = await apiFetch("/settings/shannon/test", { method:"POST" });
+      setTestResult(r);
+    } catch(ex) { setErr(ex.message); }
+    finally { setTesting(false); }
+  }
+
+  if (loading) return <div className="text-slate-500 text-sm">Loading…</div>;
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900 mb-1">Settings</h1>
+        <p className="text-sm text-slate-500">Konfigurasi koneksi ke Shannon AI (Red Team AI Engine)</p>
+      </div>
+
+      {err    && <div className="p-3 rounded-lg text-sm text-red-700" style={{background:"#FEF2F2",border:"1px solid #FECACA"}}>{err}</div>}
+      {success && <div className="p-3 rounded-lg text-sm text-green-700" style={{background:"#F0FDF4",border:"1px solid #BBF7D0"}}>{success}</div>}
+
+      {/* Status card */}
+      <div className="rounded-xl p-4 flex items-center gap-4"
+        style={{background: cfg?.is_configured ? "#F0FDF4" : "#FFF7ED",
+                border: `1px solid ${cfg?.is_configured ? "#BBF7D0" : "#FED7AA"}`}}>
+        <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+          style={{background: cfg?.is_configured ? "#22c55e" : "#f97316"}}>
+          <i className={`fa-solid ${cfg?.is_configured ? "fa-circle-check" : "fa-triangle-exclamation"} text-white text-sm`}></i>
+        </div>
+        <div>
+          <div className="font-semibold text-sm" style={{color: cfg?.is_configured ? "#166534" : "#9a3412"}}>
+            {cfg?.is_configured ? "Shannon AI Terkonfigurasi" : "Shannon AI Belum Dikonfigurasi"}
+          </div>
+          <div className="text-xs mt-0.5" style={{color: cfg?.is_configured ? "#16a34a" : "#c2410c"}}>
+            {cfg?.is_configured
+              ? `API key aktif · ${cfg.base_url} · model: ${cfg.model}`
+              : "Masukkan API key untuk mengaktifkan fitur Shannon AI"}
+          </div>
+        </div>
+      </div>
+
+      {/* Config form */}
+      <form onSubmit={save} className="rounded-xl overflow-hidden" style={{border:"1px solid #E2E8F0"}}>
+        {/* Header */}
+        <div className="px-5 py-4 flex items-center gap-2.5"
+          style={{background:"#1E2D4A",borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+          <i className="fa-solid fa-robot text-sm" style={{color:"#a78bfa"}}></i>
+          <span className="text-sm font-semibold text-white">Shannon AI Configuration</span>
+        </div>
+
+        <div className="p-5 space-y-5" style={{background:"#ffffff"}}>
+
+          {/* API Key */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              API Key
+              {cfg?.api_key_set && !keyDirty && (
+                <span className="ml-2 text-xs font-normal text-green-600">
+                  <i className="fa-solid fa-circle-check mr-1 text-[10px]"></i>
+                  Set: {cfg.api_key_masked}
+                </span>
+              )}
+            </label>
+            <div className="relative">
+              <input
+                type={showKey ? "text" : "password"}
+                className="w-full text-sm px-3 py-2 pr-10 rounded-lg outline-none"
+                style={{border:"1px solid #CBD5E1",background:"#F8FAFC",fontFamily:"'JetBrains Mono',monospace"}}
+                placeholder={cfg?.api_key_set ? "••••••••••••  (ketik untuk mengganti)" : "sk-..."}
+                value={apiKey}
+                onChange={e => { setApiKey(e.target.value); setKeyDirty(true); }}
+                autoComplete="off"
+              />
+              <button type="button" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                onClick={() => setShowKey(v => !v)}>
+                <i className={`fa-solid ${showKey ? "fa-eye-slash" : "fa-eye"} text-xs`}></i>
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Kosongkan jika tidak ingin mengubah API key.</p>
+          </div>
+
+          {/* Base URL */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">Base URL</label>
+            <input
+              type="text"
+              className="w-full text-sm px-3 py-2 rounded-lg outline-none"
+              style={{border:"1px solid #CBD5E1",background:"#F8FAFC",fontFamily:"'JetBrains Mono',monospace"}}
+              placeholder="https://api.shannon-ai.com/v1"
+              value={baseUrl}
+              onChange={e => setBaseUrl(e.target.value)}
+            />
+            <p className="text-xs text-slate-400 mt-1">
+              Endpoint OpenAI-compatible. Bisa diubah ke self-hosted model (Ollama, LM Studio, dll).
+            </p>
+          </div>
+
+          {/* Model */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">Model</label>
+            <input
+              type="text"
+              className="w-full text-sm px-3 py-2 rounded-lg outline-none"
+              style={{border:"1px solid #CBD5E1",background:"#F8FAFC",fontFamily:"'JetBrains Mono',monospace"}}
+              placeholder="shannon-1.6-pro"
+              value={model}
+              onChange={e => setModel(e.target.value)}
+            />
+            <p className="text-xs text-slate-400 mt-1">
+              Nama model. Contoh: <code className="bg-slate-100 px-1 rounded">gpt-4o</code>,{" "}
+              <code className="bg-slate-100 px-1 rounded">claude-sonnet-4-6</code>,{" "}
+              <code className="bg-slate-100 px-1 rounded">llama3.1:70b</code>
+            </p>
+          </div>
+
+          {/* Max Tokens */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              Max Tokens <span className="font-normal text-slate-400">({maxTokens})</span>
+            </label>
+            <input
+              type="range" min="256" max="8000" step="256"
+              className="w-full accent-violet-600"
+              value={maxTokens}
+              onChange={e => setMaxTokens(e.target.value)}
+            />
+            <div className="flex justify-between text-xs text-slate-400 mt-0.5">
+              <span>256</span><span>8000</span>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-3 pt-2" style={{borderTop:"1px solid #F1F5F9"}}>
+            <button type="submit" disabled={saving}
+              className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
+              style={{background:"#7c3aed",color:"#fff",border:"1px solid #6d28d9"}}
+              onMouseEnter={e=>{if(!saving)e.currentTarget.style.background="#6d28d9"}}
+              onMouseLeave={e=>{e.currentTarget.style.background="#7c3aed"}}>
+              {saving
+                ? <><i className="fa-solid fa-circle-notch spin mr-1.5"></i>Menyimpan…</>
+                : <><i className="fa-solid fa-floppy-disk mr-1.5"></i>Simpan Konfigurasi</>}
+            </button>
+            <button type="button" disabled={testing || !cfg?.is_configured}
+              className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
+              style={{background:"#f1f5f9",color:"#374151",border:"1px solid #CBD5E1"}}
+              onClick={testConnection}
+              onMouseEnter={e=>{if(!testing)e.currentTarget.style.background="#e2e8f0"}}
+              onMouseLeave={e=>{e.currentTarget.style.background="#f1f5f9"}}>
+              {testing
+                ? <><i className="fa-solid fa-circle-notch spin mr-1.5"></i>Testing…</>
+                : <><i className="fa-solid fa-plug-circle-bolt mr-1.5"></i>Test Connection</>}
+            </button>
+          </div>
+        </div>
+      </form>
+
+      {/* Test result */}
+      {testResult && (
+        <div className="rounded-xl p-4"
+          style={{background: testResult.success ? "#F0FDF4" : "#FEF2F2",
+                  border: `1px solid ${testResult.success ? "#BBF7D0" : "#FECACA"}`}}>
+          <div className="flex items-center gap-2 mb-1">
+            <i className={`fa-solid ${testResult.success ? "fa-circle-check text-green-600" : "fa-circle-xmark text-red-600"} text-sm`}></i>
+            <span className="font-semibold text-sm" style={{color: testResult.success ? "#166534" : "#991b1b"}}>
+              {testResult.success ? "Koneksi Berhasil" : "Koneksi Gagal"}
+            </span>
+          </div>
+          <p className="text-xs" style={{color: testResult.success ? "#15803d" : "#b91c1c"}}>
+            {testResult.message || testResult.error}
+          </p>
+          {testResult.success && (
+            <div className="flex gap-4 mt-2">
+              {[["Base URL", testResult.base_url], ["Model", testResult.model]].map(([k,v]) => v && (
+                <div key={k} className="text-xs">
+                  <span className="text-slate-500">{k}: </span>
+                  <span className="font-mono text-slate-700">{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Info box */}
+      <div className="rounded-xl p-4 text-xs space-y-1.5" style={{background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+        <p className="font-semibold text-slate-700 flex items-center gap-1.5">
+          <i className="fa-solid fa-circle-info text-blue-500"></i>
+          Tentang Shannon AI
+        </p>
+        <p className="text-slate-500 leading-relaxed">
+          Shannon AI adalah model AI yang digunakan untuk merencanakan eksekusi teknik ATT&CK,
+          merekomendasikan langkah kill chain, dan menganalisis hasil eksekusi.
+          Platform ini mendukung semua endpoint yang kompatibel dengan OpenAI API
+          (OpenAI, Anthropic, Ollama, LM Studio, Azure OpenAI, dan lainnya).
+        </p>
+        <p className="text-slate-400">
+          Perubahan disimpan langsung ke file <code className="bg-white px-1 rounded border">.env</code> dan
+          berlaku segera tanpa restart.
+        </p>
+      </div>
     </div>
   );
 }

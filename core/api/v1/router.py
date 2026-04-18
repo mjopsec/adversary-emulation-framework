@@ -4,7 +4,7 @@ Router utama API v1 — gabungkan semua sub-router di sini.
 
 from fastapi import APIRouter
 
-from core.api.v1 import agents, apt_profiles, campaigns, health, phase3, purple_team, reports, stix, techniques
+from core.api.v1 import agents, apt_profiles, atomics, campaigns, health, phase3, purple_team, reports, settings, stix, techniques
 
 api_router = APIRouter()
 
@@ -30,3 +30,9 @@ api_router.include_router(reports.router)
 
 # ─── Phase 7: STIX 2.1 Export ─────────────────────────────────────────────────
 api_router.include_router(stix.router)
+
+# ─── Atomic Red Team Library ───────────────────────────────────────────────────
+api_router.include_router(atomics.router)
+
+# ─── Platform Settings ─────────────────────────────────────────────────────────
+api_router.include_router(settings.router)

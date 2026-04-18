@@ -249,6 +249,7 @@ async def plan_campaign_step(
     target: str,
     db: DBSession,
     evasion_context: str | None = None,
+    campaign_context: str | None = None,
 ) -> dict:
     """
     Minta Shannon AI merencanakan perintah untuk teknik ini terhadap target.
@@ -286,6 +287,8 @@ async def plan_campaign_step(
             agent=active_agent,
             settings=settings,
             evasion_context=evasion_context,
+            campaign_context=campaign_context,
+            target=target,
         )
     except Exception as e:
         msg = str(e)
@@ -307,10 +310,13 @@ async def plan_campaign_step(
         "technique_id": step.technique_id,
         "technique_name": tech_info.get("name", step.technique_id),
         "tactic": tech_info.get("tactic", ""),
+        "target": target,
         "task_type": primary["task_type"],
         "command": primary["command"],
         "explanation": primary.get("explanation", ""),
-        "alternatives": plan_result["alternatives"],
+        "alternatives": plan_result.get("alternatives", []),
+        "art_alternatives": plan_result.get("art_alternatives", []),
+        "has_art": plan_result.get("has_art", False),
     }
 
 
@@ -416,6 +422,7 @@ async def list_campaign_executions(campaign_id: str, db: DBSession) -> list[dict
             "step_id": ex.step_id,
             "technique_id": ex.technique_id,
             "technique_name": ex.technique_name,
+            "tactic": ex.tactic if hasattr(ex, "tactic") else None,
             "target": ex.target,
             "status": ex.status,
             "result_detail": ex.result_detail,
@@ -427,3 +434,67 @@ async def list_campaign_executions(campaign_id: str, db: DBSession) -> list[dict
         }
         for ex in executions
     ]
+
+
+class SuggestNextStepRequest(BaseModel):
+    target: str | None = None
+    previous_results: list[dict] = []   # [{technique_id, tactic, status, result_detail}]
+    existing_techniques: list[str] = []
+
+
+@router.post(
+    "/{campaign_id}/suggest-next-step",
+    summary="Shannon merekomendasikan langkah kill chain berikutnya",
+)
+async def suggest_next_step(
+    campaign_id: str,
+    body: SuggestNextStepRequest,
+    db: DBSession,
+) -> dict:
+    """
+    Berikan konteks eksekusi sebelumnya kepada Shannon, dapatkan rekomendasi
+    teknik ATT&CK berikutnya yang paling relevan + command konkret.
+
+    Shannon menganalisis output dari langkah-langkah sebelumnya (service yang
+    ditemukan, kredensial yang terkumpul, privilege level) untuk menentukan
+    langkah logis berikutnya dalam kill chain post-compromise.
+    """
+    from core.agent.task_dispatcher import TaskDispatcher
+    from core.config import Settings as _Settings
+
+    # Ambil campaign untuk context environment
+    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Kampanye tidak ditemukan.")
+
+    settings = _Settings()
+    dispatcher = TaskDispatcher(db)
+
+    # Cari agent aktif untuk target
+    agent = None
+    if body.target:
+        agent = await dispatcher.manager.find_agent_for_target(
+            target_ip=body.target,
+            campaign_id=campaign_id,
+            agent_type="it",
+        )
+        if agent and not agent.is_active:
+            agent = None
+
+    try:
+        suggestion = await dispatcher.suggest_next_step(
+            previous_results=body.previous_results,
+            existing_techniques=body.existing_techniques,
+            agent=agent,
+            settings=settings,
+            environment=campaign.environment_type or "it",
+            target=body.target,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "rate-limited" in msg.lower() or "429" in msg or "quota" in msg.lower() or "402" in msg:
+            raise HTTPException(status_code=503, detail=msg)
+        raise HTTPException(status_code=500, detail=f"Shannon error: {msg}")
+
+    return suggestion
