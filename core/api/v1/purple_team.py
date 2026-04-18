@@ -43,6 +43,14 @@ class CreateSessionRequest(BaseModel):
     facilitator: str | None = None
 
 
+class UpdateSessionRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    red_team_lead: str | None = None
+    blue_team_lead: str | None = None
+    facilitator: str | None = None
+
+
 class RecordRedActionRequest(BaseModel):
     technique_id: str = Field(..., description="ATT&CK technique ID (misal: T1566)")
     technique_name: str | None = None
@@ -112,6 +120,19 @@ async def get_session_detail(session_id: str, db: DBSession) -> dict:
     if not ps:
         raise HTTPException(status_code=404, detail="Session tidak ditemukan.")
     return ps.to_summary()
+
+
+@router.patch("/sessions/{session_id}", summary="Update purple session metadata")
+async def update_session(session_id: str, body: UpdateSessionRequest, db: DBSession) -> dict:
+    result = await db.execute(select(PurpleSession).where(PurpleSession.id == session_id))
+    ps = result.scalar_one_or_none()
+    if not ps:
+        raise HTTPException(status_code=404, detail="Session tidak ditemukan.")
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(ps, field, value)
+    await db.commit()
+    await db.refresh(ps)
+    return ps.__dict__
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Hapus purple session")
