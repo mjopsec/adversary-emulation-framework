@@ -240,6 +240,8 @@ class RunStepRequest(BaseModel):
     """Body opsional untuk override command yang direncanakan Shannon."""
     override_command: str | None = None
     override_task_type: str | None = None  # shell_command | powershell | python_exec
+    reiterate: bool = False               # Aktifkan self-healing loop untuk kali_ssh
+    max_iter: int = 4                     # Maks iterasi reiterate (1–8)
 
 
 @router.get("/{campaign_id}/steps/{step_id}/plan", summary="Rencanakan langkah (tanpa eksekusi)")
@@ -370,6 +372,9 @@ async def run_campaign_step(
     if body.override_command:
         extra_context["override_command"] = body.override_command
         extra_context["override_task_type"] = body.override_task_type or "shell_command"
+    if body.reiterate:
+        extra_context["reiterate"] = True
+        extra_context["max_iter"] = max(1, min(8, body.max_iter))
     return await runner.run_step(campaign_id, step_id, target, extra_context=extra_context)
 
 

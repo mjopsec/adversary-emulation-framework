@@ -1289,6 +1289,7 @@ function CampaignDetail({ id, navigate }) {
   const [editedCmd, setEditedCmd] = useState(() => loadPlanCache().editedCmd || {});
   const [editedType, setEditedType] = useState(() => loadPlanCache().editedType || {});
   const [cleanupCmd, setCleanupCmd] = useState({});   // step_id → cleanup_command (ART)
+  const [reiterateOn, setReiterateOn] = useState({});  // step_id → bool
   const [stepForm, setStepForm] = useState({ phase:"initial_access", technique_id:"", method:"", notes:"", order_index:1, risk_assessment:"medium" });
   const [techSearch, setTechSearch] = useState("");
   const [techSuggestions, setTechSuggestions] = useState([]);
@@ -1477,9 +1478,15 @@ function CampaignDetail({ id, navigate }) {
     const plan = planData[stepId];
     const cmd = editedCmd[stepId];
     if (!target?.trim()) { setErr("Isi target IP/hostname terlebih dahulu."); return; }
-    setRunningStep(stepId); setErr(""); setRunningMsg("Mengirim perintah ke agent…");
+    const isReiterate = reiterateOn[stepId];
+    setRunningStep(stepId); setErr(""); setRunningMsg(isReiterate ? "Memulai eksekusi reiterate di Kali…" : "Mengirim perintah ke agent…");
 
-    const msgs = [
+    const msgs = isReiterate ? [
+      [5000,  "Attempt 1 — menjalankan command di Kali…"],
+      [20000, "Menganalisis output — Shannon memeriksa error…"],
+      [40000, "Attempt 2 — menjalankan command yang diperbaiki…"],
+      [70000, "Masih iterasi — menunggu hasil akhir…"],
+    ] : [
       [3000,  "Command dikirim → menunggu agent beacon…"],
       [15000, "Agent sedang mengeksekusi perintah…"],
       [40000, "Menunggu agent melaporkan hasil…"],
@@ -1493,6 +1500,10 @@ function CampaignDetail({ id, navigate }) {
       if (plan && cmd && currentType !== "simulation") {
         body.override_command = cmd;
         body.override_task_type = currentType;
+      }
+      if (reiterateOn[stepId]) {
+        body.reiterate = true;
+        body.max_iter = 4;
       }
       const r = await apiFetch(
         `/campaigns/${id}/steps/${stepId}/run?target=${encodeURIComponent(target)}`,
@@ -1915,12 +1926,31 @@ function CampaignDetail({ id, navigate }) {
                             {/* Execute button — visible after plan is ready */}
                             {hasPlan && (
                               <>
+                                {/* Reiterate toggle — only relevant for kali_ssh */}
+                                {(editedType[s.id] || planData[s.id]?.task_type) === "kali_ssh" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setReiterateOn(prev => ({...prev, [s.id]: !prev[s.id]}))}
+                                    title="Self-healing loop: jika command error, Shannon akan memperbaiki dan retry otomatis"
+                                    className="btn-sm"
+                                    style={{
+                                      background: reiterateOn[s.id] ? "#7c3aed" : "#f1f5f9",
+                                      color: reiterateOn[s.id] ? "#fff" : "#64748b",
+                                      border: `1px solid ${reiterateOn[s.id] ? "#6d28d9" : "#CBD5E1"}`,
+                                      fontSize: "0.7rem",
+                                    }}>
+                                    <i className="fa-solid fa-arrows-rotate mr-1"></i>
+                                    Reiterate {reiterateOn[s.id] ? "ON" : "OFF"}
+                                  </button>
+                                )}
                                 <button className="btn-sm btn-emerald" disabled={isRunning || isPlanning}
                                   onClick={()=>runStep(s.id)}
-                                  title="Execute the command below">
+                                  title={reiterateOn[s.id] ? "Execute with self-healing — Shannon will auto-fix errors" : "Execute the command below"}>
                                   {isRunning
                                     ? <><i className="fa-solid fa-circle-notch spin mr-1"></i>Running…</>
-                                    : <><i className="fa-solid fa-play mr-1"></i>Execute</>}
+                                    : reiterateOn[s.id]
+                                      ? <><i className="fa-solid fa-arrows-rotate mr-1"></i>Execute + Reiterate</>
+                                      : <><i className="fa-solid fa-play mr-1"></i>Execute</>}
                                 </button>
                                 <button className="btn-sm btn-ghost" disabled={isRunning}
                                   onClick={()=>cancelPlan(s.id)} title="Dismiss plan">
@@ -4175,13 +4205,26 @@ function PlatformSettings() {
   const [err, setErr] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Form fields
+  // Shannon form fields
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [maxTokens, setMaxTokens] = useState(2048);
   const [showKey, setShowKey] = useState(false);
-  const [keyDirty, setKeyDirty] = useState(false);  // true = user typed a new key
+  const [keyDirty, setKeyDirty] = useState(false);
+
+  // Pentest box state
+  const [pbCfg, setPbCfg] = useState(null);
+  const [pbHost, setPbHost] = useState("");
+  const [pbPort, setPbPort] = useState(22);
+  const [pbUser, setPbUser] = useState("kali");
+  const [pbPass, setPbPass] = useState("");
+  const [pbShowPass, setPbShowPass] = useState(false);
+  const [pbSaving, setPbSaving] = useState(false);
+  const [pbTesting, setPbTesting] = useState(false);
+  const [pbTestResult, setPbTestResult] = useState(null);
+  const [pbErr, setPbErr] = useState("");
+  const [pbSuccess, setPbSuccess] = useState("");
 
   useEffect(() => {
     apiFetch("/settings/shannon")
@@ -4190,10 +4233,18 @@ function PlatformSettings() {
         setBaseUrl(d.base_url || "");
         setModel(d.model || "");
         setMaxTokens(d.max_tokens || 2048);
-        // API key tidak di-prefill — user ketik ulang jika mau ubah
       })
       .catch(e => setErr(e.message))
       .finally(() => setLoading(false));
+
+    apiFetch("/settings/pentest-box")
+      .then(d => {
+        setPbCfg(d);
+        setPbHost(d.host || "");
+        setPbPort(d.port || 22);
+        setPbUser(d.user || "kali");
+      })
+      .catch(() => {});
   }, []);
 
   async function save(e) {
@@ -4221,6 +4272,32 @@ function PlatformSettings() {
       setTestResult(r);
     } catch(ex) { setErr(ex.message); }
     finally { setTesting(false); }
+  }
+
+  async function savePentestBox(e) {
+    e.preventDefault();
+    setPbSaving(true); setPbErr(""); setPbSuccess(""); setPbTestResult(null);
+    const body = {};
+    if (pbHost)             body.host     = pbHost;
+    if (pbPort)             body.port     = Number(pbPort);
+    if (pbUser)             body.user     = pbUser;
+    if (pbPass)             body.password = pbPass;
+    try {
+      const updated = await apiFetch("/settings/pentest-box", { method:"PATCH", body:JSON.stringify(body) });
+      setPbCfg(updated);
+      setPbPass("");
+      setPbSuccess("Konfigurasi Pentest Box berhasil disimpan.");
+    } catch(ex) { setPbErr(ex.message); }
+    finally { setPbSaving(false); }
+  }
+
+  async function testPentestBox() {
+    setPbTesting(true); setPbTestResult(null); setPbErr("");
+    try {
+      const r = await apiFetch("/settings/pentest-box/test", { method:"POST" });
+      setPbTestResult(r);
+    } catch(ex) { setPbErr(ex.message); }
+    finally { setPbTesting(false); }
   }
 
   if (loading) return <div className="text-slate-500 text-sm">Loading…</div>;
@@ -4412,6 +4489,171 @@ function PlatformSettings() {
         <p className="text-slate-400">
           Perubahan disimpan langsung ke file <code className="bg-white px-1 rounded border">.env</code> dan
           berlaku segera tanpa restart.
+        </p>
+      </div>
+
+      {/* ── Pentest Box Section ── */}
+      <div>
+        <h2 className="text-lg font-bold text-slate-900 mb-1">Pentest Box</h2>
+        <p className="text-sm text-slate-500">SSH ke Kali Linux / Parrot OS untuk eksekusi tools eksternal</p>
+      </div>
+
+      {pbErr    && <div className="p-3 rounded-lg text-sm text-red-700" style={{background:"#FEF2F2",border:"1px solid #FECACA"}}>{pbErr}</div>}
+      {pbSuccess && <div className="p-3 rounded-lg text-sm text-green-700" style={{background:"#F0FDF4",border:"1px solid #BBF7D0"}}>{pbSuccess}</div>}
+
+      {/* Pentest Box status card */}
+      <div className="rounded-xl p-4 flex items-center gap-4"
+        style={{background: pbCfg?.is_configured ? "#F0FDF4" : "#FFF7ED",
+                border: `1px solid ${pbCfg?.is_configured ? "#BBF7D0" : "#FED7AA"}`}}>
+        <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+          style={{background: pbCfg?.is_configured ? "#22c55e" : "#f97316"}}>
+          <i className={`fa-solid ${pbCfg?.is_configured ? "fa-terminal" : "fa-triangle-exclamation"} text-white text-sm`}></i>
+        </div>
+        <div>
+          <div className="font-semibold text-sm" style={{color: pbCfg?.is_configured ? "#166534" : "#9a3412"}}>
+            {pbCfg?.is_configured ? "Pentest Box Terkonfigurasi" : "Pentest Box Belum Dikonfigurasi"}
+          </div>
+          <div className="text-xs mt-0.5" style={{color: pbCfg?.is_configured ? "#16a34a" : "#c2410c"}}>
+            {pbCfg?.is_configured
+              ? `${pbCfg.user}@${pbCfg.host}:${pbCfg.port} — SSH aktif`
+              : "Masukkan host dan kredensial SSH untuk mengaktifkan eksekusi via Kali/Parrot"}
+          </div>
+        </div>
+      </div>
+
+      {/* Pentest Box form */}
+      <form onSubmit={savePentestBox} className="rounded-xl overflow-hidden" style={{border:"1px solid #E2E8F0"}}>
+        <div className="px-5 py-4 flex items-center gap-2.5"
+          style={{background:"#1a1f2e",borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+          <i className="fa-solid fa-terminal text-sm" style={{color:"#4ade80"}}></i>
+          <span className="text-sm font-semibold text-white">Pentest Box SSH Configuration</span>
+        </div>
+
+        <div className="p-5 space-y-5" style={{background:"#ffffff"}}>
+
+          {/* Host + Port */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">Host / IP Address</label>
+              <input
+                type="text"
+                className="w-full text-sm px-3 py-2 rounded-lg outline-none"
+                style={{border:"1px solid #CBD5E1",background:"#F8FAFC",fontFamily:"'JetBrains Mono',monospace"}}
+                placeholder="172.23.0.87"
+                value={pbHost}
+                onChange={e => setPbHost(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">Port</label>
+              <input
+                type="number" min="1" max="65535"
+                className="w-full text-sm px-3 py-2 rounded-lg outline-none"
+                style={{border:"1px solid #CBD5E1",background:"#F8FAFC",fontFamily:"'JetBrains Mono',monospace"}}
+                placeholder="22"
+                value={pbPort}
+                onChange={e => setPbPort(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Username */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">Username</label>
+            <input
+              type="text"
+              className="w-full text-sm px-3 py-2 rounded-lg outline-none"
+              style={{border:"1px solid #CBD5E1",background:"#F8FAFC",fontFamily:"'JetBrains Mono',monospace"}}
+              placeholder="kali"
+              value={pbUser}
+              onChange={e => setPbUser(e.target.value)}
+            />
+          </div>
+
+          {/* Password */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">Password</label>
+            <div className="relative">
+              <input
+                type={pbShowPass ? "text" : "password"}
+                className="w-full text-sm px-3 py-2 pr-10 rounded-lg outline-none"
+                style={{border:"1px solid #CBD5E1",background:"#F8FAFC",fontFamily:"'JetBrains Mono',monospace"}}
+                placeholder="kali"
+                value={pbPass}
+                onChange={e => setPbPass(e.target.value)}
+                autoComplete="new-password"
+              />
+              <button type="button" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                onClick={() => setPbShowPass(v => !v)}>
+                <i className={`fa-solid ${pbShowPass ? "fa-eye-slash" : "fa-eye"} text-xs`}></i>
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Kosongkan jika tidak ingin mengubah password.</p>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-3 pt-2" style={{borderTop:"1px solid #F1F5F9"}}>
+            <button type="submit" disabled={pbSaving}
+              className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
+              style={{background:"#15803d",color:"#fff",border:"1px solid #166534"}}
+              onMouseEnter={e=>{if(!pbSaving)e.currentTarget.style.background="#166534"}}
+              onMouseLeave={e=>{e.currentTarget.style.background="#15803d"}}>
+              {pbSaving
+                ? <><i className="fa-solid fa-circle-notch spin mr-1.5"></i>Menyimpan…</>
+                : <><i className="fa-solid fa-floppy-disk mr-1.5"></i>Simpan Konfigurasi</>}
+            </button>
+            <button type="button" disabled={pbTesting || !pbCfg?.is_configured}
+              className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
+              style={{background:"#f1f5f9",color:"#374151",border:"1px solid #CBD5E1"}}
+              onClick={testPentestBox}
+              onMouseEnter={e=>{if(!pbTesting)e.currentTarget.style.background="#e2e8f0"}}
+              onMouseLeave={e=>{e.currentTarget.style.background="#f1f5f9"}}>
+              {pbTesting
+                ? <><i className="fa-solid fa-circle-notch spin mr-1.5"></i>Testing SSH…</>
+                : <><i className="fa-solid fa-plug-circle-bolt mr-1.5"></i>Test SSH Connection</>}
+            </button>
+          </div>
+        </div>
+      </form>
+
+      {/* Pentest Box test result */}
+      {pbTestResult && (
+        <div className="rounded-xl p-4"
+          style={{background: pbTestResult.success ? "#F0FDF4" : "#FEF2F2",
+                  border: `1px solid ${pbTestResult.success ? "#BBF7D0" : "#FECACA"}`}}>
+          <div className="flex items-center gap-2 mb-2">
+            <i className={`fa-solid ${pbTestResult.success ? "fa-circle-check text-green-600" : "fa-circle-xmark text-red-600"} text-sm`}></i>
+            <span className="font-semibold text-sm" style={{color: pbTestResult.success ? "#166534" : "#991b1b"}}>
+              {pbTestResult.success ? "SSH Berhasil" : "SSH Gagal"}
+            </span>
+          </div>
+          {pbTestResult.success ? (
+            <pre className="text-xs rounded p-3 overflow-x-auto whitespace-pre-wrap"
+              style={{background:"#0d1117",color:"#4ade80",fontFamily:"'JetBrains Mono',monospace",maxHeight:"200px"}}>
+              {pbTestResult.output}
+            </pre>
+          ) : (
+            <p className="text-xs text-red-700">{pbTestResult.error}</p>
+          )}
+        </div>
+      )}
+
+      {/* Pentest Box info */}
+      <div className="rounded-xl p-4 text-xs space-y-1.5" style={{background:"#F8FAFC",border:"1px solid #E2E8F0"}}>
+        <p className="font-semibold text-slate-700 flex items-center gap-1.5">
+          <i className="fa-solid fa-circle-info text-emerald-500"></i>
+          Cara Kerja Pentest Box
+        </p>
+        <p className="text-slate-500 leading-relaxed">
+          Ketika Shannon merekomendasikan task dengan <code className="bg-white px-1 rounded border">task_type: kali_ssh</code>,
+          platform akan SSH ke mesin ini dan menjalankan perintah secara remote.
+          Digunakan untuk teknik-teknik yang membutuhkan perspektif dari luar — seperti scanning, exploitation, dan lateral movement
+          menggunakan tools <code className="bg-white px-1 rounded border">nmap</code>,{" "}
+          <code className="bg-white px-1 rounded border">impacket</code>,{" "}
+          <code className="bg-white px-1 rounded border">crackmapexec</code>, dan sejenisnya yang dijalankan dari posisi attacker.
+        </p>
+        <p className="text-slate-400">
+          Host key verification dinonaktifkan untuk lab environment. Jangan gunakan di production.
         </p>
       </div>
     </div>

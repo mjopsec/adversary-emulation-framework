@@ -186,3 +186,66 @@ async def test_shannon_connection() -> dict:
         return {"success": False, "error": f"Endpoint tidak ditemukan — periksa Base URL. ({s.shannon_base_url})"}
     else:
         return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+
+
+# ─── Pentest Box Endpoints ─────────────────────────────────────────────────────
+
+class PentestBoxConfigRead(BaseModel):
+    host: str | None
+    port: int
+    user: str
+    is_configured: bool
+
+
+class PentestBoxConfigUpdate(BaseModel):
+    host: str | None = None
+    port: int | None = None
+    user: str | None = None
+    password: str | None = None
+
+
+@router.get("/pentest-box", response_model=PentestBoxConfigRead, summary="Baca konfigurasi Pentest Box")
+async def get_pentest_box_config() -> PentestBoxConfigRead:
+    s = get_settings()
+    return PentestBoxConfigRead(
+        host=s.pentest_box_host,
+        port=s.pentest_box_port,
+        user=s.pentest_box_user,
+        is_configured=s.has_pentest_box_configured,
+    )
+
+
+@router.patch("/pentest-box", response_model=PentestBoxConfigRead, summary="Update konfigurasi Pentest Box")
+async def update_pentest_box_config(body: PentestBoxConfigUpdate) -> PentestBoxConfigRead:
+    if body.host is not None:
+        _write_env_value("PENTEST_BOX_HOST", body.host)
+    if body.port is not None:
+        _write_env_value("PENTEST_BOX_PORT", str(body.port))
+    if body.user is not None:
+        _write_env_value("PENTEST_BOX_USER", body.user)
+    if body.password is not None:
+        _write_env_value("PENTEST_BOX_PASSWORD", body.password)
+
+    get_settings.cache_clear()
+    s = get_settings()
+    return PentestBoxConfigRead(
+        host=s.pentest_box_host,
+        port=s.pentest_box_port,
+        user=s.pentest_box_user,
+        is_configured=s.has_pentest_box_configured,
+    )
+
+
+@router.post("/pentest-box/test", summary="Test SSH ke Pentest Box")
+async def test_pentest_box_connection() -> dict:
+    s = get_settings()
+    if not s.has_pentest_box_configured:
+        raise HTTPException(status_code=400, detail="Pentest box belum dikonfigurasi.")
+    from core.agent.pentest_ssh import PentestSSHExecutor
+    executor = PentestSSHExecutor(
+        host=s.pentest_box_host,
+        port=s.pentest_box_port,
+        username=s.pentest_box_user,
+        password=s.pentest_box_password,
+    )
+    return await executor.test_connection()

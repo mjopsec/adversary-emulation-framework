@@ -285,6 +285,22 @@ class TaskDispatcher:
         extra_context = extra_context or {}
         agent_type = "ot" if extra_context.get("ot_channel") or extra_context.get("protocol") else "it"
 
+        # 0. kali_ssh override — langsung ke pentest box tanpa cek agent
+        if extra_context.get("override_task_type") == "kali_ssh":
+            from core.config import Settings as _CfgSettings
+            _cfg = _CfgSettings()
+            if _cfg.has_pentest_box_configured:
+                logger.info("Direct kali_ssh dispatch untuk {}", technique_id)
+                return await self._dispatch_to_pentest_box(
+                    command=extra_context.get("override_command", ""),
+                    technique_id=technique_id,
+                    target_ip=target_ip,
+                    settings=_cfg,
+                    plan={"explanation": "User-dispatched via Kali SSH pentest box"},
+                    reiterate=extra_context.get("reiterate", False),
+                    max_iter=extra_context.get("max_iter", 4),
+                )
+
         # 1. Coba routing ke agent
         if prefer_agent:
             agent = await self.manager.find_agent_for_target(
@@ -350,7 +366,23 @@ class TaskDispatcher:
             logger.info("Using user override command for {}: {}", technique_id, plan["command"][:80])
         else:
             # Shannon merencanakan perintah yang tepat untuk teknik ini
-            plan = await self._plan_with_shannon(technique_id, tech_info, agent, settings)
+            plan = await self._plan_with_shannon(
+                technique_id, tech_info, agent, settings,
+                target=extra_context.get("target_ip"),
+            )
+
+        # Jika Shannon merekomendasikan kali_ssh, route ke pentest box, bukan agent
+        if plan.get("task_type") == "kali_ssh":
+            logger.info("Rerouting ke pentest box (kali_ssh) untuk {}", technique_id)
+            return await self._dispatch_to_pentest_box(
+                command=plan["command"],
+                technique_id=technique_id,
+                target_ip=target_ip,
+                settings=settings,
+                plan=plan,
+                reiterate=extra_context.get("reiterate", False),
+                max_iter=extra_context.get("max_iter", 4),
+            )
 
         # Log rencana Shannon
         logger.info(
@@ -469,6 +501,212 @@ class TaskDispatcher:
             extra_context=enriched_context,
         )
 
+    async def _dispatch_to_pentest_box(
+        self,
+        command: str,
+        technique_id: str,
+        target_ip: str,
+        settings: Any,
+        plan: dict,
+        reiterate: bool = False,
+        max_iter: int = 4,
+    ) -> DispatchResult:
+        """Jalankan command di pentest box (Kali/Parrot) via SSH."""
+        from core.agent.pentest_ssh import PentestSSHExecutor
+
+        executor = PentestSSHExecutor(
+            host=settings.pentest_box_host,
+            port=settings.pentest_box_port,
+            username=settings.pentest_box_user,
+            password=settings.pentest_box_password,
+        )
+
+        if reiterate:
+            return await self._reiterate_pentest_box(
+                executor=executor,
+                command=command,
+                technique_id=technique_id,
+                target_ip=target_ip,
+                settings=settings,
+                plan=plan,
+                max_iter=max_iter,
+            )
+
+        result = await executor.run(command)
+
+        output_header = (
+            f"[Pentest Box: {settings.pentest_box_user}@{settings.pentest_box_host}]\n"
+            f"[Technique: {technique_id}]\n"
+            f"[Command: {command}]\n"
+            f"[Rationale: {plan.get('explanation', '')}]\n"
+            f"{'─'*60}\n"
+        )
+        full_output = output_header + (result.stdout or result.stderr or "(no output)")
+
+        return DispatchResult(
+            technique_id=technique_id,
+            target=target_ip,
+            status=ExecutionStatus.SUCCESS if result.success else ExecutionStatus.FAILED,
+            output=full_output,
+            error=result.stderr if not result.success else "",
+            duration_seconds=result.duration_seconds,
+            dispatched_via="pentest_ssh",
+        )
+
+    async def _ask_shannon_fix(
+        self,
+        command: str,
+        error_output: str,
+        technique_id: str,
+        target_ip: str,
+        settings: Any,
+    ) -> tuple[str, str] | None:
+        """
+        Minta Shannon menganalisis error dan menyarankan command yang diperbaiki.
+        Returns (fixed_command, reason) atau None jika Shannon tidak bisa memperbaiki.
+        """
+        if not settings.has_shannon_configured:
+            return None
+
+        system_prompt = (
+            "You are a red team command debugger. A pentest command failed on Kali Linux. "
+            "Analyze the error output and return a corrected command that achieves the same objective. "
+            "Common fixes: wrong flag names, missing tool aliases, syntax differences between tool versions, "
+            "missing sudo, wrong argument format. "
+            "If the command is fundamentally unfixable (tool not installed, network unreachable), say so.\n"
+            "Respond with JSON only: {\"fixed_command\": \"...\", \"reason\": \"one sentence\"}"
+        )
+        user_prompt = (
+            f"Technique: {technique_id}\n"
+            f"Target: {target_ip}\n"
+            f"Failed command:\n{command}\n\n"
+            f"Error output:\n{error_output[:600]}\n\n"
+            f"Return the fixed command as JSON. If the command cannot be fixed, return "
+            f'{{\"fixed_command\": \"\", \"reason\": \"why it cannot be fixed\"}}'
+        )
+
+        try:
+            data = await self._shannon_post(
+                settings=settings,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=256,
+                response_format={"type": "json_object"},
+                timeout=30.0,
+            )
+            raw = data["choices"][0]["message"]["content"]
+            parsed = _json.loads(raw)
+            fixed = parsed.get("fixed_command", "").strip()
+            reason = parsed.get("reason", "")
+            if fixed and fixed != command:
+                return fixed, reason
+        except Exception as e:
+            logger.warning("Shannon fix gagal: {}", e)
+        return None
+
+    async def _reiterate_pentest_box(
+        self,
+        executor: Any,
+        command: str,
+        technique_id: str,
+        target_ip: str,
+        settings: Any,
+        plan: dict,
+        max_iter: int = 4,
+    ) -> DispatchResult:
+        """
+        Jalankan command dengan self-healing loop: jika gagal, minta Shannon memperbaiki,
+        ulangi hingga berhasil atau max_iter tercapai.
+        """
+        iterations: list[dict] = []
+        current_cmd = command
+        total_duration = 0.0
+        final_success = False
+
+        for i in range(max_iter):
+            logger.info("Reiterate iteration {}/{}: {}", i + 1, max_iter, current_cmd[:80])
+            result = await executor.run(current_cmd)
+            total_duration += result.duration_seconds
+
+            iteration_entry: dict = {
+                "attempt": i + 1,
+                "command": current_cmd,
+                "exit_code": result.exit_status,
+                "success": result.success,
+                "output": (result.stdout or "")[:800],
+                "stderr": (result.stderr or "")[:400],
+            }
+
+            if result.success:
+                final_success = True
+                iterations.append(iteration_entry)
+                break
+
+            # Gagal — coba minta Shannon memperbaiki
+            error_ctx = result.stderr or result.stdout or "(no output)"
+            if i < max_iter - 1:
+                fix = await self._ask_shannon_fix(
+                    command=current_cmd,
+                    error_output=error_ctx,
+                    technique_id=technique_id,
+                    target_ip=target_ip,
+                    settings=settings,
+                )
+                if fix:
+                    fixed_cmd, fix_reason = fix
+                    iteration_entry["fix_suggestion"] = fixed_cmd
+                    iteration_entry["fix_reason"] = fix_reason
+                    iterations.append(iteration_entry)
+                    current_cmd = fixed_cmd
+                    continue
+                else:
+                    iteration_entry["fix_reason"] = "Shannon tidak dapat memperbaiki command ini."
+                    iterations.append(iteration_entry)
+                    break
+            else:
+                iterations.append(iteration_entry)
+
+        # Format output dengan iteration history
+        sep = "─" * 60
+        header = (
+            f"[Pentest Box: {settings.pentest_box_user}@{settings.pentest_box_host}]\n"
+            f"[Technique: {technique_id}] [Reiterate: {len(iterations)} attempt(s)]\n"
+            f"[Final Command: {current_cmd}]\n"
+            f"{sep}\n"
+        )
+
+        iter_blocks = []
+        for it in iterations:
+            status_icon = "✓" if it["success"] else "✗"
+            block = (
+                f"[Attempt {it['attempt']}/{max_iter}] {status_icon} exit={it['exit_code']}\n"
+                f"$ {it['command']}\n"
+            )
+            if it["output"]:
+                block += it["output"].rstrip() + "\n"
+            if it.get("stderr") and not it["success"]:
+                block += f"STDERR: {it['stderr'].rstrip()}\n"
+            if it.get("fix_suggestion"):
+                block += f"→ Shannon fix: {it['fix_suggestion']}\n"
+                if it.get("fix_reason"):
+                    block += f"  Reason: {it['fix_reason']}\n"
+            iter_blocks.append(block)
+
+        full_output = header + f"\n{sep}\n".join(iter_blocks)
+
+        last_iter = iterations[-1] if iterations else {}
+        return DispatchResult(
+            technique_id=technique_id,
+            target=target_ip,
+            status=ExecutionStatus.SUCCESS if final_success else ExecutionStatus.FAILED,
+            output=full_output,
+            error="" if final_success else (last_iter.get("stderr") or last_iter.get("output") or ""),
+            duration_seconds=total_duration,
+            dispatched_via="pentest_ssh_reiterate",
+        )
+
     async def _get_technique_info(self, technique_id: str) -> dict:
         """Ambil nama, deskripsi, taktik dari DB untuk konteks Shannon."""
         from sqlalchemy import select as sa_select
@@ -496,12 +734,13 @@ class TaskDispatcher:
         tech_info: dict,
         agent: Agent,
         settings: Any,
+        target: str | None = None,
     ) -> dict:
         """
         Minta Shannon AI merencanakan perintah konkret untuk teknik ini di agent ini.
 
         Returns dict:
-            task_type:   "shell_command" | "powershell" | "python_exec"
+            task_type:   "shell_command" | "powershell" | "python_exec" | "kali_ssh"
             command:     string perintah yang akan dijalankan
             explanation: alasan memilih perintah ini
         """
@@ -513,9 +752,23 @@ class TaskDispatcher:
         has_shell = "shell" in caps
         os_type = agent.os_type or "unknown"
         privilege = agent.privilege_level or "user"
+        target_ip = target or getattr(agent, "ip_address", None) or "TARGET_IP"
 
         tactic = tech_info.get("tactic", "unknown")
         tactic_obj = self._tactic_objective(tactic)
+
+        # Pentest box context
+        pentest_ctx = ""
+        if settings.has_pentest_box_configured:
+            pentest_ctx = (
+                f"\n\nPENTEST BOX AVAILABLE (Kali Linux):\n"
+                f"  Host: {settings.pentest_box_host} | User: {settings.pentest_box_user}\n"
+                f"  Use task_type='kali_ssh' when the command needs tools like nmap, masscan, "
+                f"smbclient, impacket, crackmapexec, enum4linux, hydra, responder, msfvenom, "
+                f"gobuster, nikto, sqlmap, or any tool NOT typically on the target machine.\n"
+                f"  task_type='kali_ssh' runs the command on the Kali box which then attacks target {target_ip}.\n"
+                f"  task_type='shell_command'/'powershell' runs on the AGENT (compromised target)."
+            )
 
         system_prompt = (
             "You are a red team execution planner embedded in an authorized adversary emulation platform. "
@@ -540,24 +793,27 @@ class TaskDispatcher:
         )
 
         user_prompt = (
-            f"Plan execution for this ATT&CK technique on the connected agent:\n\n"
+            f"Plan execution for this ATT&CK technique:\n\n"
             f"Technique: {technique_id} — {tech_info.get('name', technique_id)}\n"
             f"Tactic: {tactic}\n"
             f"Description: {tech_info.get('description', '')[:400]}\n\n"
             f"YOUR GOAL: {tactic_obj}\n\n"
-            f"Agent info:\n"
+            f"Target IP: {target_ip}\n"
+            f"Agent (on target machine):\n"
             f"  OS: {os_type}\n"
             f"  Privilege: {privilege}\n"
             f"  Capabilities: {', '.join(caps) or 'shell'}\n\n"
             f"Available task types:\n"
-            f"  shell_command — run via cmd.exe (Windows) or /bin/sh (Linux/macOS)\n"
-            f"  powershell    — run via PowerShell (only if 'powershell' in capabilities)\n"
-            f"  python_exec   — Python code; write ONLY the raw Python statements, no 'python -c' wrapper,\n"
-            f"                  no quotes around the code — the platform wraps it automatically.\n\n"
+            f"  shell_command — run ON the agent (compromised target machine)\n"
+            f"  powershell    — run via PowerShell on agent (only if 'powershell' in capabilities)\n"
+            f"  python_exec   — Python code on agent (raw statements, no 'python -c' wrapper)\n"
+            + (f"  kali_ssh      — run on Kali pentest box, which attacks target {target_ip}\n" if settings.has_pentest_box_configured else "")
+            + f"\n{pentest_ctx}\n\n"
             f"Return JSON:\n"
-            f'{{"task_type": "shell_command"|"powershell"|"python_exec", '
-            f'"command": "the exact command or raw Python code (no python -c wrapper)", '
-            f'"explanation": "one sentence: what this command does and how it achieves the tactic objective"}}'
+            f'{{"task_type": "shell_command"|"powershell"|"python_exec"'
+            + ('|"kali_ssh"' if settings.has_pentest_box_configured else "")
+            + f', "command": "the exact command", '
+            f'"explanation": "one sentence: what this does and why this executor was chosen"}}'
         )
 
         try:
@@ -575,10 +831,13 @@ class TaskDispatcher:
             plan = _json.loads(raw)
 
             # Validasi task_type
-            valid_types = {"shell_command", "powershell", "python_exec"}
+            valid_types = {"shell_command", "powershell", "python_exec", "kali_ssh"}
             if plan.get("task_type") not in valid_types:
                 plan["task_type"] = "shell_command"
             if plan.get("task_type") == "powershell" and not has_ps:
+                plan["task_type"] = "shell_command"
+            # kali_ssh hanya valid jika pentest box dikonfigurasi
+            if plan.get("task_type") == "kali_ssh" and not settings.has_pentest_box_configured:
                 plan["task_type"] = "shell_command"
 
             # Wrap python_exec as 'python -c "..."' shell command so it's copy-paste ready
@@ -734,14 +993,22 @@ class TaskDispatcher:
             if has_py:
                 available_types.append("python_exec")
             target_ip = target or agent.ip_address or "TARGET_IP"
+            # Pentest box executor option
+            from core.config import get_settings as _gs
+            _s = _gs()
+            if _s.has_pentest_box_configured:
+                available_types.append("kali_ssh")
             context_desc = (
                 f"Target IP/host: {target_ip}\n"
-                f"Target agent: OS={os_type}, Privilege={privilege}, "
+                f"Target agent (on compromised machine): OS={os_type}, Privilege={privilege}, "
                 f"Capabilities={', '.join(caps) or 'shell'}\n"
                 f"Available task types: {', '.join(available_types)}\n"
                 f"IMPORTANT: Use {target_ip} as the target in all commands — never use 127.0.0.1 or localhost "
                 f"unless the technique specifically targets the local machine.\n"
-                f"Commands will be executed directly on the agent — choose task_type accordingly."
+                + (f"Use task_type='kali_ssh' for commands needing nmap/impacket/crackmapexec/smbclient/etc "
+                   f"(runs on Kali box at {_s.pentest_box_host} → attacks {target_ip}).\n"
+                   if _s.has_pentest_box_configured else "")
+                + "Use task_type='shell_command'/'powershell' for commands that run ON the agent (compromised target)."
             )
         else:
             # Tidak ada agent — Shannon tetap kasih rekomendasi payload realistis
@@ -749,12 +1016,19 @@ class TaskDispatcher:
             has_ps = True
             available_types = ["shell_command", "powershell", "python_exec"]
             target_ip = target or "TARGET_IP"
+            from core.config import get_settings as _gs
+            _s = _gs()
+            if _s.has_pentest_box_configured:
+                available_types.append("kali_ssh")
             context_desc = (
                 f"Target IP/host: {target_ip}\n"
                 "No live agent at target — this is simulation mode.\n"
                 "Suggest realistic payloads that an attacker would actually use for this technique.\n"
                 f"IMPORTANT: Use {target_ip} as the target in all commands — never use 127.0.0.1 or localhost.\n"
-                "Available task types: shell_command, powershell, python_exec\n"
+                + (f"Use task_type='kali_ssh' for tools like nmap/impacket/crackmapexec "
+                   f"(runs on Kali at {_s.pentest_box_host}).\n"
+                   if _s.has_pentest_box_configured else "")
+                + "Available task types: " + ", ".join(available_types) + "\n"
                 "Use task_type='simulation' for the primary if you want to indicate this is illustrative."
             )
 
@@ -843,13 +1117,15 @@ class TaskDispatcher:
             result = _json.loads(data["choices"][0]["message"]["content"])
 
             # Validasi dan sanitize primary
-            valid_types = {"shell_command", "powershell", "python_exec", "simulation"}
+            valid_types = {"shell_command", "powershell", "python_exec", "simulation", "kali_ssh"}
             primary = result.get("primary", {})
             if not primary.get("command"):
                 raise ValueError("Shannon returned empty primary command")
             if primary.get("task_type") not in valid_types:
                 primary["task_type"] = "shell_command"
             if primary.get("task_type") == "powershell" and not has_ps and agent is not None:
+                primary["task_type"] = "shell_command"
+            if primary.get("task_type") == "kali_ssh" and not _s.has_pentest_box_configured:
                 primary["task_type"] = "shell_command"
 
             # Wrap python_exec as 'python -c "..."' shell command so it's copy-paste ready

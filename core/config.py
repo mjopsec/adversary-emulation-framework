@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     shannon_model: str = "shannon-1.6-pro"
     shannon_max_tokens: int = Field(default=2048, ge=256, le=8000)
 
+    # ─── Pentest Box (Kali Linux / Parrot / attacker machine via SSH) ─────────
+    pentest_box_host: str | None = None
+    pentest_box_port: int = Field(default=22, ge=1, le=65535)
+    pentest_box_user: str = "kali"
+    pentest_box_password: str = ""
+
     # ─── MITRE ATT&CK ─────────────────────────────────────────────────────────
     attack_data_dir: Path = BASE_DIR / "data" / "attack"
     enterprise_attack_file: str = "enterprise-attack.json"
@@ -87,6 +93,10 @@ class Settings(BaseSettings):
     @property
     def has_shannon_configured(self) -> bool:
         return self.shannon_api_key is not None and len(self.shannon_api_key) > 10
+
+    @property
+    def has_pentest_box_configured(self) -> bool:
+        return bool(self.pentest_box_host and self.pentest_box_user)
 
     @field_validator("attack_data_dir", "log_file", mode="before")
     @classmethod
