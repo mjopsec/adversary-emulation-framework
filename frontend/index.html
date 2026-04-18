@@ -915,7 +915,7 @@ function CampaignDetail({ id, navigate }) {
   const [planningStep, setPlanningStep] = useState(null);
   const [runningMsg, setRunningMsg] = useState("");
   const [stepResults, setStepResults] = useState({});
-  const [expandedStep, setExpandedStep] = useState(null);
+  const [expandedSteps, setExpandedSteps] = useState(() => new Set());
   const [planData, setPlanData] = useState(() => loadPlanCache().planData || {});
   const [editedCmd, setEditedCmd] = useState(() => loadPlanCache().editedCmd || {});
   const [editedType, setEditedType] = useState(() => loadPlanCache().editedType || {});
@@ -1121,7 +1121,7 @@ function CampaignDetail({ id, navigate }) {
       );
       if (r && r.success === false) throw new Error(r.error || "Step execution failed");
       await reloadExecutions();
-      setExpandedStep(stepId);
+      setExpandedSteps(prev => new Set([...prev, stepId]));
       // Clear plan setelah berhasil dieksekusi
       setPlanData(prev => { const n={...prev}; delete n[stepId]; return n; });
       setEditedCmd(prev => { const n={...prev}; delete n[stepId]; return n; });
@@ -1130,7 +1130,7 @@ function CampaignDetail({ id, navigate }) {
       clearPlanCache(stepId);
       load();
     }
-    catch(ex) { setErr(ex.message); setExpandedStep(null); }
+    catch(ex) { setErr(ex.message); }
     finally {
       timers.forEach(t => clearTimeout(t));
       setRunningStep(null);
@@ -1457,7 +1457,7 @@ function CampaignDetail({ id, navigate }) {
             <tbody className="divide-y" style={{borderColor:"#E2E8F0"}}>
               {steps.map(s => {
                 const res = stepResults[s.id];
-                const isExpanded = expandedStep === s.id;
+                const isExpanded = expandedSteps.has(s.id);
                 const hasResult = !!res;
                 const findings = res?.findings || [];
                 const detected = findings.some(f => f.detected);
@@ -1511,7 +1511,7 @@ function CampaignDetail({ id, navigate }) {
                               </>
                             )}
                             {hasResult && (
-                              <button className="btn-sm btn-ghost" onClick={()=>setExpandedStep(isExpanded ? null : s.id)}>
+                              <button className="btn-sm btn-ghost" onClick={()=>setExpandedSteps(prev=>{const n=new Set(prev);n.has(s.id)?n.delete(s.id):n.add(s.id);return n;})}>
                                 <i className={`fa-solid fa-chevron-${isExpanded?"up":"down"} mr-1`}></i>Result
                               </button>
                             )}

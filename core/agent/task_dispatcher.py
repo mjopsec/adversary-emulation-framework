@@ -514,15 +514,22 @@ class TaskDispatcher:
         os_type = agent.os_type or "unknown"
         privilege = agent.privilege_level or "user"
 
+        tactic = tech_info.get("tactic", "unknown")
+        tactic_obj = self._tactic_objective(tactic)
+
         system_prompt = (
             "You are a red team execution planner embedded in an authorized adversary emulation platform. "
             "Given an ATT&CK technique and a connected agent, determine the single best command to run.\n\n"
-            "CRITICAL — command must execute successfully with NO extra dependencies:\n"
+            f"TACTIC OBJECTIVE — THIS IS YOUR PRIMARY DIRECTIVE:\n"
+            f"  {tactic_obj}\n"
+            f"  The command MUST directly perform the tactic's action — not a reconnaissance substitute. "
+            f"  For privilege-escalation: actually escalate. For credential-access: actually steal credentials. "
+            f"  For lateral-movement: actually move to another host.\n\n"
+            "TECHNICAL CONSTRAINTS — command must execute with NO extra dependencies:\n"
             "- python_exec: ONLY Python standard library (socket, subprocess, os, sys, ctypes, winreg, struct, "
             "ipaddress, platform, pathlib, shutil, glob, re, json, base64, hashlib, threading, etc.). "
             "NEVER use third-party packages (netifaces, impacket, psutil, requests, paramiko, scapy, etc.). "
-            "For network info: subprocess.check_output(['ipconfig','/all']).decode() on Windows, "
-            "or socket.gethostbyname_ex(socket.gethostname()). "
+            "For network info: subprocess.check_output(['ipconfig','/all']).decode() on Windows. "
             "For process list: subprocess.check_output(['tasklist']).decode().\n"
             "- powershell: use built-in PowerShell cmdlets only.\n"
             "- shell_command: use native OS binaries (ipconfig, netstat, tasklist, net, reg, wmic on Windows; "
@@ -533,8 +540,9 @@ class TaskDispatcher:
         user_prompt = (
             f"Plan execution for this ATT&CK technique on the connected agent:\n\n"
             f"Technique: {technique_id} — {tech_info.get('name', technique_id)}\n"
-            f"Tactic: {tech_info.get('tactic', 'unknown')}\n"
+            f"Tactic: {tactic}\n"
             f"Description: {tech_info.get('description', '')[:400]}\n\n"
+            f"YOUR GOAL: {tactic_obj}\n\n"
             f"Agent info:\n"
             f"  OS: {os_type}\n"
             f"  Privilege: {privilege}\n"
@@ -547,7 +555,7 @@ class TaskDispatcher:
             f"Return JSON:\n"
             f'{{"task_type": "shell_command"|"powershell"|"python_exec", '
             f'"command": "the exact command or raw Python code (no python -c wrapper)", '
-            f'"explanation": "one sentence: why this command, what it discovers/does"}}'
+            f'"explanation": "one sentence: what this command does and how it achieves the tactic objective"}}'
         )
 
         try:
@@ -667,6 +675,30 @@ class TaskDispatcher:
                     raise
         raise last_exc or Exception("Shannon API tidak dapat dihubungi setelah beberapa retry")
 
+    # Maps ATT&CK tactic slug → concrete execution objective for Shannon
+    _TACTIC_OBJECTIVES: dict[str, str] = {
+        "initial-access":        "GAIN INITIAL ACCESS — exploit the entry vector, deliver and execute the initial payload (phishing, exploit public-facing app, valid account abuse). DO NOT just enumerate.",
+        "execution":             "EXECUTE CODE — run attacker-controlled code on the target via the specified technique (script, binary, living-off-the-land binary, etc.). DO NOT just check what's installed.",
+        "persistence":           "ESTABLISH PERSISTENCE — install a mechanism that survives reboot (registry run key, scheduled task, service, startup folder, etc.). DO NOT just list existing entries.",
+        "privilege-escalation":  "ELEVATE PRIVILEGES — actively escalate from current privilege level. Use UAC bypass, token impersonation, vulnerable service/driver exploit, DLL hijacking, or similar. DO NOT enumerate permissions — actually attempt escalation.",
+        "defense-evasion":       "EVADE DEFENSES — disable logging, tamper with AV/EDR, obfuscate payload, clear event logs, unhook APIs, or masquerade. DO NOT just check what security tools are running.",
+        "credential-access":     "STEAL CREDENTIALS — dump LSASS memory, read SAM/NTDS/LSA secrets, extract browser-stored creds, grab Kerberos tickets, or keylog. DO NOT just list accounts.",
+        "discovery":             "ENUMERATE the environment — map network topology, list users/groups, enumerate services, find sensitive files, identify domain structure.",
+        "lateral-movement":      "MOVE LATERALLY — authenticate and execute on a remote system using pass-the-hash, PsExec, WMI, RDP, SMB, or similar. DO NOT just ping.",
+        "collection":            "COLLECT DATA — find, stage, and compress sensitive files, emails, or credentials for exfiltration. DO NOT just list directories.",
+        "exfiltration":          "EXFILTRATE DATA — transfer collected data out of the network (DNS, HTTP, cloud storage, encrypted channel). DO NOT just list files.",
+        "command-and-control":   "ESTABLISH C2 — create a communication channel back to attacker infrastructure (HTTP beacon, DNS tunnel, encrypted socket). DO NOT just test connectivity.",
+        "impact":                "CAUSE IMPACT — encrypt files, delete data, wipe disks, disrupt services, or deny availability. DO NOT just list what could be impacted.",
+        "reconnaissance":        "GATHER INTELLIGENCE — actively probe the target for information (port scan, banner grab, OSINT, DNS enumeration).",
+        "resource-development":  "DEVELOP RESOURCES — set up attack infrastructure, stage tools, or prepare capabilities for the operation.",
+    }
+
+    @classmethod
+    def _tactic_objective(cls, tactic: str) -> str:
+        """Return the concrete execution objective for a given tactic."""
+        key = (tactic or "").lower().replace(" ", "-").replace("_", "-")
+        return cls._TACTIC_OBJECTIVES.get(key, "Execute this technique as a realistic red team operator would in a real engagement.")
+
     async def plan_with_alternatives(
         self,
         technique_id: str,
@@ -717,10 +749,19 @@ class TaskDispatcher:
                 "Use task_type='simulation' for the primary if you want to indicate this is illustrative."
             )
 
+        tactic = tech_info.get("tactic", "")
+        tactic_obj = self._tactic_objective(tactic)
+
         system_prompt = (
             "You are a red team execution planner for an authorized adversary emulation platform. "
             "Suggest one primary payload/command AND exactly 5 alternative approaches for the given ATT&CK technique.\n\n"
-            "CRITICAL RULES — commands must work out-of-the-box with no extra setup:\n"
+            f"TACTIC OBJECTIVE — THIS IS YOUR PRIMARY DIRECTIVE:\n"
+            f"  {tactic_obj}\n"
+            f"  Match the command to the tactic. If the tactic is privilege-escalation, the command MUST attempt "
+            f"  to escalate privileges — not enumerate. If lateral-movement, actually move to another host. "
+            f"  If credential-access, actually dump credentials. Never substitute a discovery command for an "
+            f"  action-on-objective command.\n\n"
+            "TECHNICAL CONSTRAINTS — commands must work out-of-the-box:\n"
             "1. python_exec commands: use ONLY Python standard library modules "
             "(socket, subprocess, os, sys, ctypes, winreg, struct, ipaddress, platform, shutil, pathlib, etc.). "
             "NEVER use pip-installable packages like netifaces, impacket, psutil, requests, paramiko, scapy, etc. "
@@ -744,8 +785,9 @@ class TaskDispatcher:
 
         user_prompt = (
             f"ATT&CK Technique: {technique_id} — {tech_info.get('name', technique_id)}\n"
-            f"Tactic: {tech_info.get('tactic', '')}\n"
+            f"Tactic: {tactic}\n"
             f"Description: {tech_info.get('description', '')[:500]}\n\n"
+            f"YOUR GOAL: {tactic_obj}\n\n"
             f"{context_desc}{evasion_note}\n\n"
             f"Return JSON with this exact structure (provide exactly 5 alternatives):\n"
             '{{"primary": {{"task_type": "shell_command|powershell|python_exec|simulation", '
